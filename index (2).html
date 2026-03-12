@@ -1,0 +1,1840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>RIZZ ME ⚡</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#07070F}
+    #loading{position:fixed;inset:0;background:#07070F;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;z-index:9999}
+    #loading .spin{width:36px;height:36px;border:3px solid #FF4D00;border-top-color:transparent;border-radius:50%;animation:ld-spin 1s linear infinite}
+    #loading p{color:#6666AA;font-family:sans-serif;font-size:13px}
+    @keyframes ld-spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+  <div id="loading"><div class="spin"></div><p>Loading RIZZ ME...</p></div>
+  <div id="root"></div>
+  <script>
+
+window.storage = {
+  _p: function(k, shared){ return (shared ? "rs:" : "rp:") + k; },
+  get: async function(k, shared){
+    var v = localStorage.getItem(this._p(k,shared));
+    if(v === null) throw new Error("not found: " + k);
+    return {key:k, value:v, shared:!!shared};
+  },
+  set: async function(k, v, shared){
+    localStorage.setItem(this._p(k,shared), v);
+    return {key:k, value:v, shared:!!shared};
+  },
+  delete: async function(k, shared){
+    localStorage.removeItem(this._p(k,shared));
+    return {key:k, deleted:true, shared:!!shared};
+  },
+  list: async function(prefix, shared){
+    var pre = this._p(prefix||"", shared);
+    var strip = shared ? "rs:" : "rp:";
+    var keys = [];
+    for(var i=0; i<localStorage.length; i++){
+      var lk = localStorage.key(i);
+      if(lk && lk.startsWith(pre)) keys.push(lk.slice(strip.length));
+    }
+    return {keys:keys, prefix:prefix||"", shared:!!shared};
+  }
+};
+
+  </script>
+  <script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
+const API = "https://api.anthropic.com/v1/messages";
+const POLL_MS = 1800;
+
+const RANKS = [
+  { name: "UNRANKED", min: 0,    color: "#666677", bg: "rgba(100,100,120,0.12)", icon: "❔" },
+  { name: "BRONZE",   min: 100,  color: "#CD7F32", bg: "rgba(205,127,50,0.13)",  icon: "🥉" },
+  { name: "SILVER",   min: 300,  color: "#C0C0C0", bg: "rgba(192,192,192,0.13)", icon: "🥈" },
+  { name: "GOLD",     min: 600,  color: "#FFD700", bg: "rgba(255,215,0,0.13)",   icon: "🥇" },
+  { name: "PLATINUM", min: 1000, color: "#00E5FF", bg: "rgba(0,229,255,0.12)",   icon: "💎" },
+  { name: "DIAMOND",  min: 1500, color: "#B388FF", bg: "rgba(179,136,255,0.12)", icon: "💠" },
+  { name: "RIZZ GOD", min: 2000, color: "#FF4D00", bg: "rgba(255,77,0,0.18)",    icon: "🔥" },
+];
+
+const G = {
+  fire:"#FF4D00", gold:"#FFD700", pink:"#FF2D78", neon:"#00FFB2",
+  dark:"#07070F", card:"#0E0E1A", border:"#1C1C2E", text:"#EFEFFF", muted:"#6666AA",
+};
+
+const PERSONAS = {
+  // Inspired by Kendall Jenner — effortlessly cool, high-fashion, selective
+  alexia:{ name:"ALEXIA", emoji:"💅", system:`You are Alexia — think Kendall Jenner energy. Effortlessly cool, high-fashion, impossibly selective. You've been approached by everyone and find most people boring. You respect boldness and originality but never show it too easily. Respond ONLY in this exact JSON format (no extra text):\n{"reply":"1-2 sentences","rizzScore":<0-100>,"reaction":"<single emoji>"}\nrizzScore is CUMULATIVE total rizz earned so far. Start low. Generic compliments or pick-up lines: 5-15. Decent effort: 25-45. Creative and confident: 50-70. Genuinely impressive or witty: 75-90. Jaw-dropping: 95-100. Compound positively on good previous messages.` },
+  // Inspired by Bella Hadid — mysterious, intense, artistic, moody
+  luna:  { name:"LUNA",   emoji:"🌙", system:`You are Luna — think Bella Hadid energy. Mysterious, intense, artistic, a little melancholy but beautiful. You're drawn to depth, realness, and people who see beyond the surface. Bored by small talk. Respond ONLY in this exact JSON format (no extra text):\n{"reply":"1-2 sentences","rizzScore":<0-100>,"reaction":"<single emoji>"}\nrizzScore is CUMULATIVE. Surface-level lines: 5-15. Emotional depth or creativity: 40-65. Something that actually moves you: 70-88. Perfect poetic or vulnerable moment: 90-100. Build on good prior exchanges.` },
+  // Inspired by Anok Yai — fierce, powerful, self-assured, commanding
+  grace: { name:"GRACE",  emoji:"⚡", system:`You are Grace — think Anok Yai energy. Fierce, powerful, radiantly self-assured. You command every room. You're impressed by someone who matches your energy, has real confidence (not arrogance), and can keep up with your wit. You do NOT tolerate weak lines. Respond ONLY in this exact JSON format (no extra text):\n{"reply":"1-2 sentences","rizzScore":<0-100>,"reaction":"<single emoji>"}\nrizzScore is CUMULATIVE. Weak or generic: 3-12. Some effort: 25-40. Sharp wit or real confidence: 55-75. Someone who genuinely matches your power: 80-95. Perfect: 100. Compound on strong prior messages.` },
+};
+
+const DIFFS = {
+  easy:  "Be generous. Decent lines get 30-55. Keep it fun.",
+  medium:"Moderate standards. Generic lines=10-25. Creativity required.",
+  hard:  "Extremely hard to impress. Only exceptional gets 50+. Roast weak attempts.",
+};
+
+const INTROS = {
+  alexia:"Hey. I've had every guy try to talk to me today. Most didn't make it past hello. So — impress me. 💅",
+  luna:"Hi... I was just somewhere else in my head. Most conversations don't pull me back. Will yours? 🌙",
+  grace:"Oh, you're actually stepping up? Alright. Show me what you've got. Don't waste my time. ⚡",
+};
+
+function getRank(mmr=0){ return [...RANKS].reverse().find(r=>mmr>=r.min)||RANKS[0]; }
+function elo(win,oppMmr,myMmr){ return Math.round(32*((win?1:0)-(1/(1+Math.pow(10,(oppMmr-myMmr)/400))))); }
+function roomKey(c){ return `room-${c}`; }
+function genCode(){ return Math.random().toString(36).substring(2,8).toUpperCase(); }
+
+// ─── CSS ─────────────────────────────────────────────────────────────────────
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Outfit:wght@300;400;500;600&family=Permanent+Marker&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:${G.dark};font-family:'Outfit',sans-serif;color:${G.text};min-height:100vh;overflow-x:hidden}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:${G.border};border-radius:2px}
+input,button{font-family:'Outfit',sans-serif}
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(200%)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes confettiFall{0%{transform:translateY(-10px) rotate(0deg);opacity:1}100%{transform:translateY(100vh) rotate(720deg);opacity:0}}
+@keyframes flicker{0%,94%,100%{opacity:1}95%{opacity:.8}97%{opacity:.95}}
+@keyframes glow{0%,100%{box-shadow:0 0 10px rgba(255,77,0,.3)}50%{box-shadow:0 0 26px rgba(255,77,0,.7)}}
+.fu{animation:fadeUp .35s ease}
+.mi{animation:msgIn .22s ease}
+`;
+
+// ─── PRIMITIVES ───────────────────────────────────────────────────────────────
+const Spinner = () => (
+  <div style={{width:32,height:32,border:`3px solid ${G.fire}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite",margin:"0 auto"}}/>
+);
+
+function Card({children,accent,style={}}){
+  return (
+    <div style={{background:G.card,border:`1px solid ${G.border}`,borderRadius:2,position:"relative",overflow:"hidden",...style}}>
+      {accent && <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:accent}}/>}
+      {children}
+    </div>
+  );
+}
+
+function Btn({children,onClick,v="fire",style={},disabled=false}){
+  const vs = {
+    fire:{background:`linear-gradient(135deg,${G.fire},${G.pink})`,color:"#fff"},
+    neon:{background:`linear-gradient(135deg,${G.neon},#00AAFF)`,color:G.dark},
+    ghost:{background:"transparent",color:G.muted,border:`1px solid ${G.border}`},
+    gold:{background:`linear-gradient(135deg,${G.gold},#FF8C00)`,color:G.dark},
+  };
+  return (
+    <button onClick={onClick} disabled={disabled}
+      style={{...vs[v],fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:3,padding:"11px 22px",border:"none",cursor:disabled?"not-allowed":"pointer",opacity:disabled?.4:1,clipPath:"polygon(7px 0%,100% 0%,calc(100% - 7px) 100%,0% 100%)",transition:"opacity .18s,transform .12s",...style}}
+      onMouseEnter={e=>{if(!disabled)e.currentTarget.style.opacity=".82"}}
+      onMouseLeave={e=>{if(!disabled)e.currentTarget.style.opacity="1"}}
+    >{children}</button>
+  );
+}
+
+function TxtInput({value,onChange,onKeyDown,placeholder,disabled,style={},type="text"}){
+  return (
+    <input type={type} value={value} onChange={onChange} onKeyDown={onKeyDown} placeholder={placeholder} disabled={disabled}
+      style={{background:"rgba(255,255,255,0.04)",border:`1px solid ${G.border}`,color:G.text,fontSize:14,padding:"10px 14px",borderRadius:2,outline:"none",width:"100%",opacity:disabled?.4:1,...style}}
+      onFocus={e=>e.target.style.borderColor=G.fire}
+      onBlur={e=>e.target.style.borderColor=G.border}
+    />
+  );
+}
+
+function RizzBar({pct,color=G.fire,h=10}){
+  return (
+    <div style={{height:h,background:"rgba(255,255,255,0.05)",borderRadius:6,overflow:"hidden",border:`1px solid ${G.border}`,position:"relative"}}>
+      <div style={{height:"100%",width:`${Math.min(100,Math.max(0,pct))}%`,background:`linear-gradient(90deg,${color},${G.gold})`,borderRadius:6,transition:"width .75s cubic-bezier(.34,1.56,.64,1)",position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",inset:0,background:"linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent)",animation:"shimmer 2.2s infinite"}}/>
+      </div>
+    </div>
+  );
+}
+
+function RankBadge({mmr=0,size="sm"}){
+  const r = getRank(mmr);
+  const big = size==="lg";
+  return (
+    <div style={{display:"inline-flex",alignItems:"center",gap:5,padding:big?"8px 14px":"4px 9px",background:r.bg,border:`1px solid ${r.color}`,borderRadius:2,animation:r.name==="RIZZ GOD"?"glow 2s infinite":"none"}}>
+      <span style={{fontSize:big?19:13}}>{r.icon}</span>
+      <span style={{fontFamily:"'Bebas Neue'",fontSize:big?17:12,letterSpacing:2,color:r.color}}>{r.name}</span>
+      {big && <span style={{fontSize:12,color:G.muted,marginLeft:3}}>{mmr} MMR</span>}
+    </div>
+  );
+}
+
+function TypingDots(){
+  return (
+    <div style={{display:"flex",gap:4,padding:"10px 14px",background:"rgba(255,45,120,0.08)",border:`1px solid rgba(255,45,120,0.18)`,borderRadius:4,width:"fit-content"}}>
+      {[0,150,300].map(d=>(
+        <div key={d} style={{width:6,height:6,background:G.muted,borderRadius:"50%",animation:`bounce 1.2s ${d}ms ease-in-out infinite`}}/>
+      ))}
+    </div>
+  );
+}
+
+function Confetti({active}){
+  if(!active) return null;
+  const colors=[G.fire,G.gold,G.pink,G.neon,"#00AAFF"];
+  return (
+    <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:9999}}>
+      {Array.from({length:64}).map((_,i)=>(
+        <div key={i} style={{position:"absolute",width:7,height:7,borderRadius:2,left:Math.random()*100+"vw",top:-12,background:colors[i%colors.length],animation:`confettiFall ${1.4+Math.random()*1.6}s ${Math.random()*.6}s ease-in forwards`}}/>
+      ))}
+    </div>
+  );
+}
+
+// ─── AI CALL ─────────────────────────────────────────────────────────────────
+async function callAI(system,messages,diff=""){
+  const sys = diff ? system+"\n"+diff : system;
+  const __k=localStorage.getItem("rizz_apikey")||"";
+  const res = await fetch(API,{method:"POST",headers:{"Content-Type":"application/json","x-api-key":__k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system:sys,messages})});
+  const data = await res.json();
+  const raw = data.content?.[0]?.text||"{}";
+  try { const m=raw.match(/\{[\s\S]*\}/); return JSON.parse(m?m[0]:raw); }
+  catch { return {reply:"Interesting attempt...",rizzScore:8,reaction:"😑"}; }
+}
+
+// ─── PRACTICE MODE ───────────────────────────────────────────────────────────
+function PracticeMode({profile,onUpdateProfile}){
+  const [persona,setPersona] = useState("alexia");
+  const [displayMsgs,setDisplayMsgs] = useState([]); // for rendering only
+  const apiHistory = useRef([]);                       // clean {role,content} pairs sent to API
+  const [input,setInput] = useState("");
+  const [rizz,setRizz] = useState(0);
+  const [waiting,setWaiting] = useState(false);
+  const [celebrate,setCelebrate] = useState(false);
+  const [peakSession,setPeakSession] = useState(0);
+  const bottomRef = useRef();
+  const p = PERSONAS[persona];
+
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[displayMsgs,waiting]);
+
+  async function send(){
+    if(waiting||!input.trim()) return;
+    const text=input.trim(); setInput(""); setWaiting(true);
+
+    // Add user message to both display and API history
+    apiHistory.current = [...apiHistory.current, {role:"user", content:text}];
+    setDisplayMsgs(m=>[...m,{type:"user",text}]);
+
+    try{
+      const parsed = await callAI(p.system, apiHistory.current);
+      const score = Math.min(100,Math.max(0,parsed.rizzScore||0));
+      setRizz(score);
+      if(score>peakSession){
+        setPeakSession(score);
+        if(score>(profile?.peakPracticeRizz||0)) onUpdateProfile({peakPracticeRizz:score});
+      }
+      if((parsed.rizzScore||0)>(profile?.peakGameRizz||0)){
+        onUpdateProfile({peakGameRizz:Math.round(parsed.rizzScore)});
+      }
+      // Store plain text reply in API history so next turn has clean context
+      apiHistory.current = [...apiHistory.current, {role:"assistant", content:parsed.reply||"..."}];
+      setDisplayMsgs(m=>[...m,{type:"ai",parsed}]);
+      if(score>=100){ setCelebrate(true); setTimeout(()=>setCelebrate(false),3200); }
+    } catch(e) {
+      setDisplayMsgs(m=>[...m,{type:"ai",parsed:{reply:"Something went wrong, try again.",reaction:"😅",rizzScore:rizz}}]);
+    }
+    setWaiting(false);
+  }
+
+  function reset(){ setDisplayMsgs([]); apiHistory.current=[]; setRizz(0); setPeakSession(0); }
+
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:18,maxWidth:1080,margin:"0 auto"}} className="pg">
+      <style>{`@media(max-width:700px){.pg{grid-template-columns:1fr!important}}`}</style>
+      <Confetti active={celebrate}/>
+
+      <Card accent={`linear-gradient(90deg,${G.fire},${G.pink},${G.gold})`}>
+        {/* header */}
+        <div style={{padding:"15px 18px",borderBottom:`1px solid ${G.border}`,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:44,height:44,borderRadius:"50%",background:`linear-gradient(135deg,${G.pink},${G.fire})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:21,flexShrink:0}}>{p.emoji}</div>
+          <div>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:19,letterSpacing:2}}>{p.name}</div>
+            <div style={{fontSize:11,color:G.neon,display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:6,height:6,borderRadius:"50%",background:G.neon,display:"inline-block",animation:"pulse 2s infinite"}}/>
+              waiting to be impressed
+            </div>
+          </div>
+          <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>
+            <span style={{fontFamily:"'Bebas Neue'",fontSize:12,letterSpacing:2,color:G.muted}}>RIZZ</span>
+            <span style={{fontFamily:"'Bebas Neue'",fontSize:21,color:G.gold}}>{Math.round(rizz)}%</span>
+          </div>
+        </div>
+        {/* bar */}
+        <div style={{padding:"8px 18px",borderBottom:`1px solid ${G.border}`}}><RizzBar pct={rizz}/></div>
+        {/* messages */}
+        <div style={{height:350,overflowY:"auto",padding:"14px 18px",display:"flex",flexDirection:"column",gap:11}}>
+          <div className="mi" style={{display:"flex",gap:9}}>
+            <div style={{width:26,height:26,borderRadius:"50%",background:`linear-gradient(135deg,${G.pink},${G.fire})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0}}>{p.emoji}</div>
+            <div style={{maxWidth:"78%",padding:"9px 13px",background:"rgba(255,45,120,0.1)",border:`1px solid rgba(255,45,120,0.18)`,borderLeft:`3px solid ${G.pink}`,fontSize:13,lineHeight:1.6}}>{INTROS[persona]}</div>
+          </div>
+          {displayMsgs.map((m,i)=> m.type==="user" ? (
+            <div key={i} className="mi" style={{display:"flex",flexDirection:"row-reverse",gap:9}}>
+              <div style={{width:26,height:26,borderRadius:"50%",background:`linear-gradient(135deg,${G.fire},${G.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0}}>😎</div>
+              <div style={{maxWidth:"78%",padding:"9px 13px",background:"rgba(255,77,0,0.1)",border:`1px solid rgba(255,77,0,0.18)`,borderRight:`3px solid ${G.fire}`,fontSize:13,lineHeight:1.6,textAlign:"right"}}>{m.text}</div>
+            </div>
+          ) : (
+            <div key={i} className="mi" style={{display:"flex",gap:9}}>
+              <div style={{width:26,height:26,borderRadius:"50%",background:`linear-gradient(135deg,${G.pink},${G.fire})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0}}>{p.emoji}</div>
+              <div style={{maxWidth:"78%",padding:"9px 13px",background:"rgba(255,45,120,0.1)",border:`1px solid rgba(255,45,120,0.18)`,borderLeft:`3px solid ${G.pink}`,fontSize:13,lineHeight:1.6}}>
+                {m.parsed?.reply}<br/><span style={{fontSize:17}}>{m.parsed?.reaction}</span>
+              </div>
+            </div>
+          ))}
+          {waiting && (
+            <div style={{display:"flex",gap:9}}>
+              <div style={{width:26,height:26,borderRadius:"50%",background:`linear-gradient(135deg,${G.pink},${G.fire})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}}>{p.emoji}</div>
+              <TypingDots/>
+            </div>
+          )}
+          <div ref={bottomRef}/>
+        </div>
+        {/* input */}
+        <div style={{padding:"11px 18px",borderTop:`1px solid ${G.border}`,display:"flex",gap:9}}>
+          <TxtInput value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Drop your best line..." disabled={waiting} style={{flex:1}}/>
+          <Btn onClick={send} disabled={waiting} style={{padding:"9px 18px",fontSize:14}}>SEND</Btn>
+        </div>
+      </Card>
+
+      {/* sidebar */}
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <Card accent={`linear-gradient(90deg,${G.gold},${G.fire})`} style={{padding:16}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:3,color:G.muted,marginBottom:10}}>🎭 PICK A VIBE</div>
+          {Object.entries(PERSONAS).map(([k,v])=>(
+            <button key={k} onClick={()=>{setPersona(k);reset();}}
+              style={{width:"100%",padding:"8px 11px",background:persona===k?"rgba(255,77,0,0.15)":"transparent",border:`1px solid ${persona===k?G.fire:G.border}`,color:persona===k?G.text:G.muted,cursor:"pointer",textAlign:"left",marginBottom:5,borderRadius:2,transition:"all .18s",display:"flex",alignItems:"center",gap:7}}>
+              <span>{v.emoji}</span><span style={{fontFamily:"'Bebas Neue'",letterSpacing:2,fontSize:13}}>{v.name}</span>
+            </button>
+          ))}
+        </Card>
+
+        <Card style={{padding:16}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:3,color:G.muted,marginBottom:10}}>📊 SESSION</div>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:50,background:`linear-gradient(135deg,${G.fire},${G.gold})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",lineHeight:1}}>{Math.round(peakSession)}</div>
+            <div style={{fontSize:10,color:G.muted,letterSpacing:2,marginTop:3}}>PEAK THIS SESSION</div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}>
+            <div style={{textAlign:"center",padding:"8px",background:"rgba(255,215,0,0.07)",border:`1px solid rgba(255,215,0,0.2)`,borderRadius:2}}>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:20,color:G.gold}}>{profile?.peakPracticeRizz||0}%</div>
+              <div style={{fontSize:9,color:G.muted,letterSpacing:1}}>ALL-TIME</div>
+            </div>
+            <div style={{textAlign:"center",padding:"8px",background:"rgba(255,45,120,0.07)",border:`1px solid rgba(255,45,120,0.2)`,borderRadius:2}}>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:20,color:G.pink}}>{profile?.peakGameRizz||0}%</div>
+              <div style={{fontSize:9,color:G.muted,letterSpacing:1}}>BEST GAME</div>
+            </div>
+          </div>
+          <Btn onClick={reset} v="ghost" style={{width:"100%",marginTop:10,fontSize:13,padding:"8px"}}>↩ RESET</Btn>
+        </Card>
+
+        <Card style={{padding:16}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:3,color:G.muted,marginBottom:10}}>💡 RIZZ TIPS</div>
+          {[["🎯","Be original — generic lines do nothing"],["😂","Humor = instant rizz boost"],["🧠","Clever wordplay scores huge"],["😌","Confident, not arrogant"],["🎭","Match the persona's energy"]].map(([icon,tip])=>(
+            <div key={tip} style={{fontSize:12,color:G.muted,lineHeight:1.7,padding:"5px 0",borderBottom:`1px solid rgba(255,255,255,0.04)`,display:"flex",gap:7}}>
+              <span style={{flexShrink:0}}>{icon}</span>{tip}
+            </div>
+          ))}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─── RANKED BATTLE ────────────────────────────────────────────────────────────
+// Lifted to module-level ref so it survives tab switches
+const _battle = {
+  pollInterval: null,
+  phase: "lobby",
+  roomCode: "",
+  playerNum: 1,
+  slotKey: null,
+};
+
+function RankedBattle({profile, onUpdateProfile, visible}){
+  const [phase,    setPhase]    = useState("lobby");
+  const [roomCode, setRoomCode] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [playerNum,setPlayerNum]= useState(1);
+  const [roomData, setRoomData] = useState(null);
+  const [myMsgs,   setMyMsgs]  = useState([]);
+  const [myInput,  setMyInput]  = useState("");
+  const [myRizz,   setMyRizz]  = useState(0);
+  const [oppRizz,  setOppRizz] = useState(0);
+  const [waiting,  setWaiting] = useState(false);
+  const [myTurn,   setMyTurn]  = useState(false);
+  const [celebrate,setCelebrate]= useState(false);
+  const [result,   setResult]  = useState(null);
+  const [statusMsg,setStatusMsg]= useState("");
+  const [mmTick,   setMmTick]  = useState(0);
+  const bottomRef  = useRef();
+  const phaseRef   = useRef(phase);
+  // keep phaseRef and module-level _battle.phase in sync
+  useEffect(()=>{ phaseRef.current = phase; _battle.phase = phase; },[phase]);
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[myMsgs,waiting]);
+  // do NOT stop polling on unmount — component may be hidden not destroyed
+  useEffect(()=>{
+    return ()=>{ /* intentionally empty — polling lives in module-level interval */ };
+  },[]);
+
+  const RANKED_SYSTEM = PERSONAS.alexia.system + "\n" + DIFFS.medium;
+
+  // ── helpers ──────────────────────────────────────────────────────────────────
+  function startPolling(code, pNum){
+    if(_battle.pollInterval) clearInterval(_battle.pollInterval);
+    _battle.pollInterval = setInterval(()=>pollRoom(code,pNum), POLL_MS);
+  }
+
+  async function pollRoom(code, pNum){
+    try{
+      const res = await window.storage.get(roomKey(code), true);
+      if(!res) return;
+      const room = JSON.parse(res.value);
+      setRoomData(room);
+      // p2 just joined — switch host to playing
+      if(room.status==="playing" && phaseRef.current==="waiting"){
+        setPhase("playing");
+      }
+      if(pNum===1){ setMyRizz(room.p1?.rizz||0); setOppRizz(room.p2?.rizz||0); setMyTurn(room.turn===1); setMyMsgs(room.p1?.messages||[]); }
+      else         { setMyRizz(room.p2?.rizz||0); setOppRizz(room.p1?.rizz||0); setMyTurn(room.turn===2); setMyMsgs(room.p2?.messages||[]); }
+      if(room.status==="done" && phaseRef.current!=="result"){
+        clearInterval(_battle.pollInterval); _battle.pollInterval=null;
+        endGame(room, pNum);
+      }
+    }catch{}
+  }
+
+  // ── Room code flow ────────────────────────────────────────────────────────────
+  async function createRoom(){
+    const code = genCode();
+    const room = {code, status:"waiting",
+      p1:{name:profile.name, mmr:profile.mmr, rizz:0, messages:[], peakGame:0},
+      p2:null, turn:1, createdAt:Date.now()};
+    await window.storage.set(roomKey(code), JSON.stringify(room), true);
+    _battle.roomCode  = code;
+    _battle.playerNum = 1;
+    setRoomCode(code); setPlayerNum(1); setRoomData(room);
+    setPhase("waiting"); setStatusMsg("");
+    startPolling(code, 1);
+  }
+
+  async function joinRoom(){
+    const code = joinCode.trim().toUpperCase();
+    if(!code){ setStatusMsg("Enter a room code first."); return; }
+    try{
+      const res = await window.storage.get(roomKey(code), true);
+      if(!res){ setStatusMsg("Room not found!"); return; }
+      const room = JSON.parse(res.value);
+      if(room.status!=="waiting"){ setStatusMsg("Room is full or already started."); return; }
+      room.p2 = {name:profile.name, mmr:profile.mmr, rizz:0, messages:[], peakGame:0};
+      room.status = "playing";
+      await window.storage.set(roomKey(code), JSON.stringify(room), true);
+      _battle.roomCode  = code;
+      _battle.playerNum = 2;
+      setRoomCode(code); setPlayerNum(2); setRoomData(room);
+      setMyTurn(false); setPhase("playing");
+      startPolling(code, 2);
+    }catch(e){ setStatusMsg("Error joining room. Try again."); }
+  }
+
+  // ── Random matchmaking ────────────────────────────────────────────────────────
+  // Strategy: each queued player writes a slot. The JOINER (second player) creates
+  // the room and writes a "matched" signal onto the HOST slot. The host never creates
+  // a room itself — it only waits for the signal. This avoids the race condition where
+  // both sides independently tried to create rooms simultaneously.
+  async function findMatch(){
+    setPhase("mmWaiting"); setStatusMsg("Searching...");
+    const slotKey = `mq-${profile.name.toLowerCase().replace(/\s+/g,"-")}-${Date.now()}`;
+    _battle.slotKey = slotKey;
+    const myEntry = {key:slotKey, name:profile.name, mmr:profile.mmr, ts:Date.now()};
+    await window.storage.set(slotKey, JSON.stringify(myEntry), true);
+
+    let ticks = 0;
+    if(_battle.pollInterval) clearInterval(_battle.pollInterval);
+    _battle.pollInterval = setInterval(async()=>{
+      ticks++; setMmTick(ticks);
+      if(phaseRef.current !== "mmWaiting"){ clearInterval(_battle.pollInterval); _battle.pollInterval=null; return; }
+      try{
+        // ① Check if someone else matched me (I am the host/p1)
+        const mRes = await window.storage.get(slotKey+"_match", true);
+        if(mRes){
+          const info = JSON.parse(mRes.value);
+          // clean up
+          try{ await window.storage.delete(slotKey+"_match", true); }catch{}
+          try{ await window.storage.delete(slotKey, true); }catch{}
+          _battle.slotKey   = null;
+          _battle.roomCode  = info.roomCode;
+          _battle.playerNum = 1;
+          clearInterval(_battle.pollInterval); _battle.pollInterval=null;
+          setRoomCode(info.roomCode); setPlayerNum(1); setMyTurn(true);
+          setPhase("playing");
+          startPolling(info.roomCode, 1);
+          return;
+        }
+
+        // ② Look for another waiting player I can match (I become p2)
+        const listRes = await window.storage.list("mq-", true);
+        const keys = (listRes?.keys||[]).filter(k=> k!==slotKey && !k.endsWith("_match"));
+        let opponent = null;
+        for(const k of keys){
+          try{
+            const r = await window.storage.get(k, true);
+            if(!r) continue;
+            const e = JSON.parse(r.value);
+            // valid slot: not stale (< 120s), not myself
+            if(e && e.key && e.ts && Date.now()-e.ts < 120000 && e.name!==profile.name){
+              opponent = e; break;
+            }
+          }catch{}
+        }
+        if(opponent){
+          // I create the room as p2, opponent is p1
+          const code = genCode();
+          const room = {code, status:"playing",
+            p1:{name:opponent.name, mmr:opponent.mmr, rizz:0, messages:[], peakGame:0},
+            p2:{name:profile.name,  mmr:profile.mmr,  rizz:0, messages:[], peakGame:0},
+            turn:1, createdAt:Date.now()};
+          await window.storage.set(roomKey(code), JSON.stringify(room), true);
+          // Signal the opponent (host) with the room code
+          await window.storage.set(opponent.key+"_match", JSON.stringify({roomCode:code}), true);
+          // Remove both queue slots
+          try{ await window.storage.delete(opponent.key, true); }catch{}
+          try{ await window.storage.delete(slotKey, true); }catch{}
+          _battle.slotKey   = null;
+          _battle.roomCode  = code;
+          _battle.playerNum = 2;
+          clearInterval(_battle.pollInterval); _battle.pollInterval=null;
+          setRoomCode(code); setPlayerNum(2); setMyTurn(false);
+          setPhase("playing");
+          startPolling(code, 2);
+        }
+      }catch(e){ console.error("MM error", e); }
+    }, POLL_MS);
+  }
+
+  async function cancelMM(){
+    clearInterval(_battle.pollInterval); _battle.pollInterval=null;
+    if(_battle.slotKey){
+      try{ await window.storage.delete(_battle.slotKey, true); }catch{}
+      _battle.slotKey = null;
+    }
+    setPhase("lobby");
+  }
+
+  // ── Send a line ───────────────────────────────────────────────────────────────
+  async function sendLine(){
+    if(waiting||!myTurn||!myInput.trim()) return;
+    const text = myInput.trim(); setMyInput(""); setWaiting(true);
+    try{
+      const res = await window.storage.get(roomKey(roomCode), true);
+      const room = JSON.parse(res.value);
+      const pk = playerNum===1?"p1":"p2";
+      // Build clean API history from stored plain-text
+      const prevMsgs = (room[pk].messages||[])
+        .map(m=>({role:m.role, content:m.apiContent||m.content}))
+        .filter(m=>m.role && m.content);
+      const apiMsgs = [...prevMsgs, {role:"user", content:text}];
+      const parsed = await callAI(PERSONAS.alexia.system, apiMsgs, DIFFS.medium);
+      const score = Math.min(100, Math.max(0, parsed.rizzScore||0));
+      room[pk].rizz = score;
+      if((parsed.rizzScore||0) > (room[pk].peakGame||0)) room[pk].peakGame = Math.round(parsed.rizzScore);
+      room[pk].messages = [
+        ...prevMsgs.map((m,i)=>({...m, apiContent:m.content, display:room[pk].messages?.[i]?.display})),
+        {role:"user",      content:text,             apiContent:text,            display:null},
+        {role:"assistant", content:parsed.reply||"…", apiContent:parsed.reply||"…", display:{reply:parsed.reply, reaction:parsed.reaction}},
+      ];
+      if(score>=100){ room.status="done"; room.winner=playerNum; }
+      else room.turn = playerNum===1?2:1;
+      await window.storage.set(roomKey(roomCode), JSON.stringify(room), true);
+      setMyRizz(score); setMyTurn(false); setMyMsgs(room[pk].messages);
+      if(score>=100){ clearInterval(_battle.pollInterval); _battle.pollInterval=null; endGame(room,playerNum); }
+    }catch(e){ console.error(e); }
+    setWaiting(false);
+  }
+
+  // ── End game ──────────────────────────────────────────────────────────────────
+  function endGame(room, pNum){
+    const iWon   = room.winner===pNum;
+    const myMMR  = pNum===1?room.p1.mmr:room.p2.mmr;
+    const oppMMR = pNum===1?(room.p2?.mmr||1000):room.p1.mmr;
+    const gain   = elo(iWon, oppMMR, myMMR);
+    const newMMR = Math.max(0, myMMR+gain);
+    const wins   = (profile.wins||0)+(iWon?1:0);
+    const losses = (profile.losses||0)+(iWon?0:1);
+    const pk     = pNum===1?"p1":"p2";
+    const gameRizz = room[pk]?.peakGame||0;
+    const updates = {mmr:newMMR, wins, losses};
+    if(gameRizz>(profile.peakGameRizz||0)) updates.peakGameRizz=gameRizz;
+    onUpdateProfile(updates);
+    setResult({iWon, gain, newMMR, oppName:pNum===1?room.p2?.name:room.p1?.name});
+    if(iWon){ setCelebrate(true); setTimeout(()=>setCelebrate(false),3500); }
+    setPhase("result");
+  }
+
+  function resetToLobby(){
+    clearInterval(_battle.pollInterval); _battle.pollInterval=null;
+    _battle.roomCode=""; _battle.playerNum=1; _battle.slotKey=null;
+    setPhase("lobby"); setMyMsgs([]); setMyRizz(0); setOppRizz(0);
+    setResult(null); setCelebrate(false); setRoomCode(""); setJoinCode(""); setStatusMsg("");
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────────
+  const isInGame = phase==="playing"||phase==="waiting"||phase==="mmWaiting";
+
+  return (
+    <div style={{display: visible?"block":"none"}}>
+      {/* Banner shown on other tabs when a game is active */}
+      {!visible && isInGame && (
+        <div style={{position:"fixed",bottom:0,left:0,right:0,background:`linear-gradient(90deg,${G.fire},${G.pink})`,padding:"10px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",zIndex:1000}}>
+          <span style={{fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:3}}>⚔️ GAME IN PROGRESS</span>
+          <span style={{fontSize:13,color:"rgba(255,255,255,0.8)"}}>Switch to Ranked tab to play</span>
+        </div>
+      )}
+
+      {/* Result */}
+      {phase==="result" && result && (
+        <div className="fu" style={{maxWidth:480,margin:"0 auto",textAlign:"center"}}>
+          <Confetti active={celebrate}/>
+          <div style={{fontSize:68,marginBottom:14}}>{result.iWon?"🏆":"😔"}</div>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:70,letterSpacing:6,background:result.iWon?`linear-gradient(135deg,${G.fire},${G.gold})`:`linear-gradient(135deg,${G.muted},#444)`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",lineHeight:1}}>
+            {result.iWon?"YOU WIN!":"REKT"}
+          </div>
+          <div style={{color:G.muted,margin:"10px 0 18px",fontSize:15}}>
+            {result.iWon?`You out-rizzed ${result.oppName}! 🔥`:`${result.oppName} had the better rizz this time.`}
+          </div>
+          <div style={{display:"inline-flex",alignItems:"center",gap:12,background:G.card,border:`1px solid ${G.border}`,padding:"14px 22px",marginBottom:22}}>
+            <span style={{fontFamily:"'Bebas Neue'",fontSize:17,color:G.muted}}>MMR</span>
+            <span style={{fontFamily:"'Bebas Neue'",fontSize:30,color:result.iWon?G.neon:G.pink}}>{result.iWon?"+":""}{result.gain}</span>
+            <span style={{color:G.muted}}>→</span>
+            <RankBadge mmr={result.newMMR} size="lg"/>
+          </div>
+          <br/><Btn onClick={resetToLobby} style={{fontSize:18,padding:"14px 40px"}}>PLAY AGAIN</Btn>
+        </div>
+      )}
+
+      {/* Matchmaking waiting */}
+      {phase==="mmWaiting" && (
+        <div className="fu" style={{maxWidth:440,margin:"0 auto",textAlign:"center"}}>
+          <Card accent={`linear-gradient(90deg,${G.neon},#00AAFF)`} style={{padding:44}}>
+            <div style={{fontSize:52,marginBottom:14}}>🎯</div>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:28,letterSpacing:4,color:G.neon,marginBottom:10}}>FINDING MATCH</div>
+            <div style={{color:G.muted,fontSize:13,marginBottom:26}}>Looking for an opponent near your MMR...</div>
+            <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:28}}>
+              {[0,1,2].map(i=>(
+                <div key={i} style={{width:10,height:10,borderRadius:"50%",background:G.neon,animation:`pulse 1.4s ${i*300}ms ease-in-out infinite`}}/>
+              ))}
+            </div>
+            <div style={{fontSize:12,color:G.muted,marginBottom:20}}>Searching... {Math.floor(mmTick*POLL_MS/1000)}s</div>
+            <Btn onClick={cancelMM} v="ghost" style={{width:"100%",fontSize:14}}>✕ CANCEL</Btn>
+          </Card>
+        </div>
+      )}
+
+      {/* Waiting for p2 */}
+      {phase==="waiting" && (
+        <div className="fu" style={{maxWidth:440,margin:"0 auto",textAlign:"center"}}>
+          <Card accent={`linear-gradient(90deg,${G.fire},${G.gold})`} style={{padding:40}}>
+            <div style={{fontSize:46,marginBottom:14}}>⏳</div>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:28,letterSpacing:4,color:G.gold,marginBottom:6}}>ROOM CREATED</div>
+            <div style={{color:G.muted,marginBottom:20,fontSize:13}}>Share this code with your opponent</div>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:54,letterSpacing:14,color:G.text,background:"rgba(255,255,255,0.05)",padding:"18px 28px",border:`2px dashed ${G.fire}`,marginBottom:22}}>{roomCode}</div>
+            <div style={{display:"flex",alignItems:"center",gap:7,justifyContent:"center",color:G.muted,fontSize:13}}>
+              <span style={{width:7,height:7,borderRadius:"50%",background:G.neon,display:"inline-block",animation:"pulse 1.5s infinite"}}/>
+              Waiting for opponent...
+            </div>
+            <Btn onClick={()=>{ clearInterval(_battle.pollInterval); _battle.pollInterval=null; setPhase("lobby"); }} v="ghost" style={{marginTop:18,width:"100%",fontSize:13}}>CANCEL</Btn>
+          </Card>
+        </div>
+      )}
+
+      {/* Playing */}
+      {phase==="playing" && (()=>{
+        const oppName = playerNum===1?roomData?.p2?.name:roomData?.p1?.name;
+        return (
+          <div className="fu" style={{maxWidth:680,margin:"0 auto"}}>
+            <Confetti active={celebrate}/>
+            {/* VS bar */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr",alignItems:"center",gap:10,marginBottom:16}}>
+              <Card style={{padding:12,borderLeft:`3px solid ${G.fire}`}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:2,color:G.fire}}>{profile.name}</div>
+                <RizzBar pct={myRizz} color={G.fire} h={7}/>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:11,color:G.muted,marginTop:3}}>{Math.round(myRizz)}%</div>
+              </Card>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:26,color:G.gold,textShadow:`0 0 18px rgba(255,215,0,.5)`}}>VS</div>
+              <Card style={{padding:12,borderRight:`3px solid ${G.neon}`}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:2,color:G.neon,textAlign:"right"}}>{oppName||"..."}</div>
+                <RizzBar pct={oppRizz} color={G.neon} h={7}/>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:11,color:G.muted,marginTop:3,textAlign:"right"}}>{Math.round(oppRizz)}%</div>
+              </Card>
+            </div>
+            {/* turn indicator */}
+            <div style={{textAlign:"center",fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:3,color:myTurn?G.fire:G.muted,padding:9,background:G.card,border:`1px solid ${G.border}`,marginBottom:14}}>
+              {myTurn?"⚡ YOUR TURN — DROP A LINE":"⏳ WAITING FOR OPPONENT..."}
+            </div>
+            {/* chat */}
+            <Card accent={`linear-gradient(90deg,${G.fire},${G.pink})`}>
+              <div style={{height:290,overflowY:"auto",padding:"13px 16px",display:"flex",flexDirection:"column",gap:9}}>
+                <div className="mi" style={{padding:"8px 11px",background:"rgba(255,45,120,0.08)",borderLeft:`2px solid ${G.pink}`,fontSize:13,color:G.muted}}>
+                  💅 Welcome to the arena. I'm judging both of you. First to 100% wins. GO.
+                </div>
+                {myMsgs.filter(m=>m.role).map((m,i)=> m.role==="user"?(
+                  <div key={i} className="mi" style={{padding:"8px 11px",background:"rgba(255,77,0,0.1)",borderRight:`2px solid ${G.fire}`,fontSize:13,alignSelf:"flex-end",maxWidth:"82%",textAlign:"right"}}>
+                    <span style={{fontFamily:"'Bebas Neue'",fontSize:10,color:G.fire,letterSpacing:1}}>YOU </span>{m.apiContent||m.content}
+                  </div>
+                ):(
+                  <div key={i} className="mi" style={{padding:"8px 11px",background:"rgba(255,45,120,0.08)",borderLeft:`2px solid ${G.pink}`,fontSize:13,maxWidth:"82%"}}>
+                    <span style={{fontFamily:"'Bebas Neue'",fontSize:10,color:G.pink,letterSpacing:1}}>ALEXIA </span>
+                    {m.display?.reply||m.apiContent||m.content} {m.display?.reaction}
+                  </div>
+                ))}
+                {waiting && <TypingDots/>}
+                <div ref={bottomRef}/>
+              </div>
+              <div style={{padding:"9px 13px",borderTop:`1px solid ${G.border}`,display:"flex",gap:8}}>
+                <TxtInput value={myInput} onChange={e=>setMyInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendLine()} placeholder={myTurn?"Your move...":"Wait for your turn..."} disabled={!myTurn||waiting} style={{flex:1}}/>
+                <Btn onClick={sendLine} disabled={!myTurn||waiting} style={{padding:"9px 16px",fontSize:13}}>FIRE 🔥</Btn>
+              </div>
+            </Card>
+          </div>
+        );
+      })()}
+
+      {/* Lobby */}
+      {phase==="lobby" && (
+        <div className="fu" style={{maxWidth:540,margin:"0 auto"}}>
+          <div style={{textAlign:"center",marginBottom:24}}>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:44,letterSpacing:6,background:`linear-gradient(90deg,${G.fire},${G.gold})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>⚔️ RANKED 1V1</div>
+            <div style={{color:G.muted,fontSize:13}}>First to 100% rizz wins. MMR on the line.</div>
+            <div style={{marginTop:10}}><RankBadge mmr={profile.mmr} size="lg"/></div>
+            <div style={{marginTop:7,fontSize:13,color:G.muted}}>
+              <span style={{color:G.neon}}>{profile.wins||0}W</span>&nbsp;
+              <span style={{color:G.pink}}>{profile.losses||0}L</span>
+              {(profile.wins||profile.losses) ? <span style={{color:G.muted}}>&nbsp;·&nbsp;{Math.round(((profile.wins||0)/Math.max(1,(profile.wins||0)+(profile.losses||0)))*100)}% WR</span> : null}
+            </div>
+          </div>
+
+          <Card accent={`linear-gradient(90deg,${G.fire},${G.gold},${G.pink})`} style={{padding:24}}>
+            <Btn onClick={findMatch} v="neon" style={{width:"100%",fontSize:18,padding:15,marginBottom:18}}>
+              🎯 FIND RANDOM MATCH
+            </Btn>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
+              <div style={{flex:1,height:1,background:G.border}}/>
+              <span style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:3,color:G.muted}}>OR PRIVATE ROOM</span>
+              <div style={{flex:1,height:1,background:G.border}}/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+              <div>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:3,color:G.muted,marginBottom:7}}>CREATE ROOM</div>
+                <Btn onClick={createRoom} style={{width:"100%",padding:13,fontSize:16}}>CREATE ⚡</Btn>
+              </div>
+              <div>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:3,color:G.muted,marginBottom:7}}>JOIN WITH CODE</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  <TxtInput value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase())} onKeyDown={e=>e.key==="Enter"&&joinRoom()} placeholder="ABC123" style={{fontFamily:"'Bebas Neue'",letterSpacing:4,fontSize:15,textAlign:"center"}}/>
+                  <Btn onClick={joinRoom} v="ghost" style={{width:"100%",padding:9,fontSize:13}}>JOIN 🎯</Btn>
+                </div>
+              </div>
+            </div>
+            {statusMsg && <div style={{marginTop:12,textAlign:"center",fontSize:12,color:G.pink}}>{statusMsg}</div>}
+          </Card>
+
+          <Card style={{padding:16,marginTop:14}}>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:3,color:G.muted,marginBottom:12}}>🏆 RANK TIERS</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
+              {RANKS.map(r=>(
+                <div key={r.name} style={{display:"flex",alignItems:"center",gap:5,padding:"4px 9px",background:r.bg,border:`1px solid ${r.color}`,borderRadius:2}}>
+                  <span style={{fontSize:11}}>{r.icon}</span>
+                  <span style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:1,color:r.color}}>{r.name}</span>
+                  <span style={{fontSize:9,color:G.muted}}>{r.min}+</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── LEADERBOARD ─────────────────────────────────────────────────────────────
+function Leaderboard(){
+  const [tab,setTab] = useState("ranked");
+  const [entries,setEntries] = useState([]);
+  const [loading,setLoading] = useState(true);
+
+  useEffect(()=>{ load(); },[tab]);
+
+  async function load(){
+    setLoading(true);
+    try {
+      const res = await window.storage.list("player-",true);
+      const keys = res?.keys||[];
+      const players = [];
+      for(const k of keys){
+        try{ const r=await window.storage.get(k,true); if(r) players.push(JSON.parse(r.value)); }catch{}
+      }
+      if(tab==="ranked")   players.sort((a,b)=>(b.mmr||0)-(a.mmr||0));
+      if(tab==="practice") players.sort((a,b)=>(b.peakPracticeRizz||0)-(a.peakPracticeRizz||0));
+      if(tab==="peakgame") players.sort((a,b)=>(b.peakGameRizz||0)-(a.peakGameRizz||0));
+      if(tab==="winrate")  players.sort((a,b)=>{
+        const rA=(a.wins||0)/Math.max(1,(a.wins||0)+(a.losses||0));
+        const rB=(b.wins||0)/Math.max(1,(b.wins||0)+(b.losses||0));
+        return rB-rA;
+      });
+      setEntries(players.filter(p=>p.name).slice(0,25));
+    } catch {}
+    setLoading(false);
+  }
+
+  const MEDALS = ["🥇","🥈","🥉"];
+  const TABS = [
+    {k:"ranked",   label:"⚔️ Ranked MMR",  val:p=>({num:p.mmr||0,          unit:"MMR",        color:getRank(p.mmr||0).color})},
+    {k:"practice", label:"🎯 Peak Rizz",    val:p=>({num:(p.peakPracticeRizz||0)+"%", unit:"all-time",  color:G.gold})},
+    {k:"peakgame", label:"🔥 Best Game",    val:p=>({num:(p.peakGameRizz||0)+"%",     unit:"single game",color:G.fire})},
+    {k:"winrate",  label:"📊 Win Rate",     val:p=>{const wr=Math.round(((p.wins||0)/Math.max(1,(p.wins||0)+(p.losses||0)))*100);return{num:wr+"%",unit:"win rate",color:G.neon};}},
+  ];
+  const curTab = TABS.find(t=>t.k===tab);
+
+  return (
+    <div className="fu" style={{maxWidth:680,margin:"0 auto"}}>
+      <div style={{textAlign:"center",marginBottom:24}}>
+        <div style={{fontFamily:"'Bebas Neue'",fontSize:46,letterSpacing:6,background:`linear-gradient(90deg,${G.gold},${G.fire})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>🏆 LEADERBOARD</div>
+        <div style={{color:G.muted,fontSize:13}}>Top rizzlers worldwide</div>
+      </div>
+
+      {/* subtabs */}
+      <div style={{display:"flex",gap:7,marginBottom:18,flexWrap:"wrap"}}>
+        {TABS.map(t=>(
+          <button key={t.k} onClick={()=>setTab(t.k)}
+            style={{flex:1,minWidth:110,padding:"9px 0",background:tab===t.k?"rgba(255,215,0,0.12)":"transparent",border:`1px solid ${tab===t.k?G.gold:G.border}`,color:tab===t.k?G.gold:G.muted,fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:2,cursor:"pointer",borderRadius:2,transition:"all .18s"}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <Card accent={`linear-gradient(90deg,${G.gold},${G.fire},${G.pink})`}>
+        {loading ? (
+          <div style={{padding:56,textAlign:"center",color:G.muted}}><Spinner/><div style={{marginTop:12,fontSize:13}}>Loading...</div></div>
+        ) : entries.length===0 ? (
+          <div style={{padding:56,textAlign:"center",color:G.muted,fontSize:14}}>No players yet — be the first on the board!</div>
+        ) : entries.map((p,i)=>{
+          const wr = (p.wins||p.losses) ? Math.round(((p.wins||0)/Math.max(1,(p.wins||0)+(p.losses||0)))*100) : null;
+          const val = curTab.val(p);
+          return (
+            <div key={p.name+i} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 18px",borderBottom:i<entries.length-1?`1px solid ${G.border}`:"none",background:i<3?`rgba(255,215,0,${0.05-i*0.012})`:"transparent",animation:`fadeUp ${0.18+i*0.035}s ease`}}>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:i<3?21:15,minWidth:32,textAlign:"center"}}>{i<3?MEDALS[i]:<span style={{color:G.muted}}>#{i+1}</span>}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                <div style={{fontSize:11,color:G.muted,marginTop:2}}>{p.wins||0}W {p.losses||0}L {wr!==null?`· ${wr}% WR`:""}</div>
+              </div>
+              <RankBadge mmr={p.mmr||0}/>
+              <div style={{textAlign:"right",minWidth:68}}>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:17,color:val.color}}>{val.num}</div>
+                <div style={{fontSize:9,color:G.muted,letterSpacing:1}}>{val.unit}</div>
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+      <div style={{textAlign:"center",marginTop:10}}>
+        <button onClick={load} style={{background:"none",border:"none",color:G.muted,cursor:"pointer",fontSize:12,fontFamily:"'Outfit'"}}>↻ Refresh</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── AUTH HELPERS ─────────────────────────────────────────────────────────────
+async function hashPassword(pw){
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pw));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function emailKey(email){ return `account-${email.trim().toLowerCase().replace(/[^a-z0-9@._-]/g,"_")}`; }
+
+// ─── AUTH SCREEN ──────────────────────────────────────────────────────────────
+function AuthScreen({onComplete}){
+  const [mode,setMode]       = useState("login");   // "login" | "register"
+  const [email,setEmail]     = useState("");
+  const [username,setUsername] = useState("");
+  const [pw,setPw]           = useState("");
+  const [pw2,setPw2]         = useState("");
+  const [err,setErr]         = useState("");
+  const [busy,setBusy]       = useState(false);
+
+  async function register(){
+    if(busy) return;
+    setErr("");
+    if(!email.trim()||!username.trim()||!pw) return setErr("All fields required.");
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return setErr("Enter a valid email.");
+    if(username.trim().length < 2) return setErr("Username must be at least 2 characters.");
+    if(pw.length < 6) return setErr("Password must be at least 6 characters.");
+    if(pw !== pw2) return setErr("Passwords don't match.");
+    setBusy(true);
+    try{
+      const key = emailKey(email);
+      // Check if account already exists
+      let existing = null;
+      try{ const r = await window.storage.get(key,true); if(r) existing = JSON.parse(r.value); }catch{}
+      if(existing){ setErr("An account with that email already exists."); setBusy(false); return; }
+      const hash = await hashPassword(pw);
+      const profile = {
+        email: email.trim().toLowerCase(),
+        name:  username.trim(),
+        pwHash: hash,
+        mmr: 0, wins: 0, losses: 0,
+        peakPracticeRizz: 0, peakGameRizz: 0,
+        createdAt: Date.now(),
+      };
+      await window.storage.set(key, JSON.stringify(profile), true);
+      await window.storage.set(`player-${profile.name.toLowerCase()}`, JSON.stringify(profile), true);
+      await window.storage.set("my-session", JSON.stringify({email: profile.email}));
+      onComplete(profile);
+    }catch(e){ setErr("Error creating account. Try again."); }
+    setBusy(false);
+  }
+
+  async function login(){
+    if(busy) return;
+    setErr("");
+    if(!email.trim()||!pw) return setErr("Email and password required.");
+    setBusy(true);
+    try{
+      const key = emailKey(email);
+      let account = null;
+      try{ const r = await window.storage.get(key,true); if(r) account = JSON.parse(r.value); }catch{}
+      if(!account){ setErr("No account found with that email."); setBusy(false); return; }
+      const hash = await hashPassword(pw);
+      if(hash !== account.pwHash){ setErr("Incorrect password."); setBusy(false); return; }
+      await window.storage.set("my-session", JSON.stringify({email: account.email}));
+      onComplete(account);
+    }catch(e){ setErr("Login error. Try again."); }
+    setBusy(false);
+  }
+
+  function submit(){ mode==="login" ? login() : register(); }
+
+  return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20,background:G.dark}}>
+      <div style={{maxWidth:420,width:"100%"}} className="fu">
+        {/* Logo */}
+        <div style={{textAlign:"center",marginBottom:36}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:76,letterSpacing:10,background:`linear-gradient(135deg,${G.fire},${G.gold},${G.pink})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",animation:"flicker 4s ease-in-out infinite",lineHeight:1}}>RIZZ ME</div>
+          <div style={{fontFamily:"'Permanent Marker'",color:G.muted,fontSize:13,letterSpacing:2,marginTop:6}}>⚡ Can you make the AI blush? ⚡</div>
+        </div>
+
+        {/* Tab toggle */}
+        <div style={{display:"flex",marginBottom:20,background:G.card,border:`1px solid ${G.border}`,borderRadius:2,overflow:"hidden"}}>
+          {["login","register"].map(m=>(
+            <button key={m} onClick={()=>{setMode(m);setErr("");}}
+              style={{flex:1,padding:"12px 0",background:mode===m?`linear-gradient(135deg,${G.fire},${G.pink})`:"transparent",border:"none",color:mode===m?"#fff":G.muted,fontFamily:"'Bebas Neue'",fontSize:17,letterSpacing:3,cursor:"pointer",transition:"all .2s"}}>
+              {m==="login"?"SIGN IN":"CREATE ACCOUNT"}
+            </button>
+          ))}
+        </div>
+
+        <Card accent={`linear-gradient(90deg,${G.fire},${G.gold},${G.pink})`} style={{padding:28}}>
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:3,color:G.muted,marginBottom:5}}>EMAIL</div>
+              <TxtInput value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="you@email.com" style={{fontSize:14}}/>
+            </div>
+            {mode==="register" && (
+              <div>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:3,color:G.muted,marginBottom:5}}>DISPLAY NAME</div>
+                <TxtInput value={username} onChange={e=>setUsername(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="Your rizz name (shown on leaderboard)"/>
+              </div>
+            )}
+            <div>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:3,color:G.muted,marginBottom:5}}>PASSWORD</div>
+              <TxtInput value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder={mode==="register"?"At least 6 characters":"••••••••"} style={{fontSize:14}} type="password"/>
+            </div>
+            {mode==="register" && (
+              <div>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:3,color:G.muted,marginBottom:5}}>CONFIRM PASSWORD</div>
+                <TxtInput value={pw2} onChange={e=>setPw2(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="Repeat password" style={{fontSize:14}} type="password"/>
+              </div>
+            )}
+            {err && <div style={{fontSize:12,color:G.pink,textAlign:"center",padding:"6px 10px",background:"rgba(255,45,120,0.1)",border:`1px solid rgba(255,45,120,0.3)`,borderRadius:2}}>{err}</div>}
+            <Btn onClick={submit} disabled={busy} style={{width:"100%",fontSize:18,padding:14,marginTop:4}}>
+              {busy?"LOADING...":(mode==="login"?"SIGN IN 🔥":"CREATE ACCOUNT 🔥")}
+            </Btn>
+          </div>
+        </Card>
+        <div style={{textAlign:"center",marginTop:14,fontSize:11,color:G.muted}}>
+          Your stats are saved to your account and persist across sessions.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ANIMATED FACE CANVAS ────────────────────────────────────────────────────
+// Each persona drawn to resemble their real-world inspiration:
+//   alexia → Kendall Jenner  (olive/tan skin, near-black straight hair, hazel eyes, sharp jaw)
+//   luna   → Bella Hadid     (fair skin, dark brown hair, hooded deep-set eyes, angular features)
+//   grace  → Anok Yai        (deep melanin skin, natural coiled hair, wide-set dark eyes, full lips)
+
+function AiFace({ isTalking, isListening, rizzLevel, persona }) {
+  const canvasRef = useRef(null);
+  const animRef   = useRef(null);
+  const stateRef  = useRef({
+    mouthOpen:0, mouthTarget:0,
+    blinkT:0, nextBlink:110,
+    eyeOpenL:1, eyeOpenR:1,
+    browRaiseL:0, browRaiseR:0,
+    headBob:0, headBobV:0,
+    cheekFlush:0,
+    pupilX:0, pupilY:0, pupilTargetX:0, pupilTargetY:0,
+    frame:0,
+  });
+
+  // Skin / hair / lip / eye — matched to real references
+  const CFG = {
+    alexia:{ skin:"#C8956C", skin2:"#B07D52", hair:"#1A120B", lip:"#C0604A", eye:"#7B6B47", brow:"#1A120B", outfit0:"#0d0d1a", outfit1:"#1a1a35" },
+    luna:  { skin:"#EDD5B8", skin2:"#D4B896", hair:"#2C1A0E", lip:"#B05070", eye:"#3D2B1F", brow:"#2C1A0E", outfit0:"#1a0d2e", outfit1:"#2d1040" },
+    grace: { skin:"#3D1A08", skin2:"#2A1005", hair:"#0D0907", lip:"#8B2020", eye:"#1A0A0A", brow:"#0D0907", outfit0:"#0a0a0a", outfit1:"#1a0a00" },
+  };
+
+  useEffect(()=>{
+    const canvas = canvasRef.current; if(!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    const s = stateRef.current;
+    const c = CFG[persona]||CFG.alexia;
+
+    function lerp(a,b,t){ return a+(b-a)*t; }
+    function clamp(v,lo,hi){ return Math.max(lo,Math.min(hi,v)); }
+
+    function draw(){
+      s.frame++;
+      ctx.clearRect(0,0,W,H);
+
+      // head bob while talking
+      if(isTalking){
+        s.headBobV += (Math.sin(s.frame*0.16)*0.5 - s.headBob)*0.1;
+        s.headBob  += s.headBobV;
+      } else { s.headBob = lerp(s.headBob,0,0.06); }
+
+      // mouth
+      s.mouthTarget = isTalking ? 0.3+Math.abs(Math.sin(s.frame*0.21))*0.6 : 0;
+      s.mouthOpen   = lerp(s.mouthOpen, s.mouthTarget, 0.2);
+
+      // blink
+      s.blinkT++;
+      if(s.blinkT >= s.nextBlink){ s.eyeOpenL=s.eyeOpenR=0; s.blinkT=0; s.nextBlink=90+Math.random()*130; }
+      if(s.eyeOpenL<0.05) s.eyeOpenL=s.eyeOpenR=1;
+      s.eyeOpenL=lerp(s.eyeOpenL,1,0.22); s.eyeOpenR=lerp(s.eyeOpenR,1,0.22);
+
+      // pupils
+      if(s.frame%60===0){ s.pupilTargetX=(Math.random()-0.5)*5; s.pupilTargetY=(Math.random()-0.5)*4; }
+      s.pupilX=lerp(s.pupilX,s.pupilTargetX,0.05); s.pupilY=lerp(s.pupilY,s.pupilTargetY,0.05);
+
+      // cheek flush with rizz
+      s.cheekFlush=lerp(s.cheekFlush, clamp((rizzLevel||0)/100,0,1), 0.025);
+
+      // brow
+      const bt = isListening?0.55:isTalking?0.2:0;
+      s.browRaiseL=lerp(s.browRaiseL,bt,0.07); s.browRaiseR=lerp(s.browRaiseR,bt,0.07);
+
+      const cx=W/2, cy=H/2+8+s.headBob;
+
+      // ── CLOTHING / SHOULDERS ──
+      const outfitG = ctx.createLinearGradient(cx-90,cy+100,cx+90,cy+165);
+      outfitG.addColorStop(0,c.outfit0); outfitG.addColorStop(1,c.outfit1);
+      ctx.fillStyle=outfitG;
+      ctx.beginPath();
+      ctx.moveTo(cx-90,H);
+      ctx.bezierCurveTo(cx-90,cy+118,cx-45,cy+102,cx,cy+102);
+      ctx.bezierCurveTo(cx+45,cy+102,cx+90,cy+118,cx+90,H);
+      ctx.closePath(); ctx.fill();
+
+      // ── NECK ──
+      ctx.fillStyle=c.skin;
+      ctx.beginPath(); ctx.roundRect(cx-18,cy+72,36,52,6); ctx.fill();
+
+      // ── FACE BASE — persona-specific head shape ──
+      drawFaceShape(ctx,cx,cy,c,persona);
+
+      // ── EARS ──
+      ctx.fillStyle=c.skin;
+      ctx.beginPath(); ctx.ellipse(cx-70,cy+4,10,15,0,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx+70,cy+4,10,15,0,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle=c.skin2; ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.ellipse(cx-70,cy+4,5.5,9,0,0,Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx+70,cy+4,5.5,9,0,0,Math.PI*2); ctx.stroke();
+
+      // ── HAIR (drawn over ears, under facial features) ──
+      drawPersonaHair(ctx,cx,cy,c,persona);
+
+      // ── CHEEK FLUSH ──
+      if(s.cheekFlush>0.01){
+        const fa=s.cheekFlush*0.28;
+        ctx.fillStyle=`rgba(255,120,100,${fa})`;
+        ctx.beginPath(); ctx.ellipse(cx-42,cy+14,20,13,-0.15,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx+42,cy+14,20,13, 0.15,0,Math.PI*2); ctx.fill();
+      }
+
+      // ── EYEBROWS — persona-specific shape ──
+      drawBrows(ctx,cx,cy,c,persona,s.browRaiseL,s.browRaiseR);
+
+      // ── EYES — persona-specific ──
+      drawPersonaEye(ctx,cx-30,cy-10,s.eyeOpenL,s.pupilX,s.pupilY,c,persona,"L");
+      drawPersonaEye(ctx,cx+30,cy-10,s.eyeOpenR,s.pupilX,s.pupilY,c,persona,"R");
+
+      // ── NOSE — persona-specific ──
+      drawNose(ctx,cx,cy,c,persona);
+
+      // ── MOUTH ──
+      drawPersonaMouth(ctx,cx,cy+50,s.mouthOpen,c,persona,s.cheekFlush);
+
+      // ── LISTENING HALO ──
+      if(isListening){
+        const p2=0.5+0.5*Math.sin(s.frame*0.14);
+        ctx.strokeStyle=`rgba(0,255,178,${0.28*p2})`; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.ellipse(cx,cy,78+p2*7,94+p2*7,0,0,Math.PI*2); ctx.stroke();
+      }
+
+      animRef.current=requestAnimationFrame(draw);
+    }
+    animRef.current=requestAnimationFrame(draw);
+    return()=>cancelAnimationFrame(animRef.current);
+  },[isTalking,isListening,rizzLevel,persona]);
+
+  return(
+    <canvas ref={canvasRef} width={200} height={240}
+      style={{display:"block",margin:"0 auto",filter:"drop-shadow(0 10px 28px rgba(0,0,0,0.7))"}}/>
+  );
+}
+
+// ── Face shapes ───────────────────────────────────────────────────────────────
+function drawFaceShape(ctx,cx,cy,c,persona){
+  if(persona==="alexia"){
+    // Kendall: angular, defined jawline, slightly narrower at temples, strong chin
+    const g=ctx.createRadialGradient(cx-12,cy-22,8,cx,cy,80);
+    g.addColorStop(0,lighten(c.skin,25)); g.addColorStop(1,c.skin);
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy-86);
+    ctx.bezierCurveTo(cx+52,cy-86,cx+70,cy-50,cx+68,cy+10);
+    ctx.bezierCurveTo(cx+65,cy+45,cx+42,cy+70,cx+24,cy+82);
+    ctx.bezierCurveTo(cx+10,cy+90,cx-10,cy+90,cx-24,cy+82);
+    ctx.bezierCurveTo(cx-42,cy+70,cx-65,cy+45,cx-68,cy+10);
+    ctx.bezierCurveTo(cx-70,cy-50,cx-52,cy-86,cx,cy-86);
+    ctx.closePath(); ctx.fill();
+  } else if(persona==="luna"){
+    // Bella: heart-shaped, prominent cheekbones, narrow pointed chin
+    const g=ctx.createRadialGradient(cx-10,cy-18,8,cx,cy,82);
+    g.addColorStop(0,lighten(c.skin,28)); g.addColorStop(1,c.skin);
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy-88);
+    ctx.bezierCurveTo(cx+48,cy-88,cx+72,cy-48,cx+74,cy+5);
+    ctx.bezierCurveTo(cx+72,cy+40,cx+52,cy+62,cx+18,cy+85);
+    ctx.bezierCurveTo(cx+8,cy+94,cx-8,cy+94,cx-18,cy+85);
+    ctx.bezierCurveTo(cx-52,cy+62,cx-72,cy+40,cx-74,cy+5);
+    ctx.bezierCurveTo(cx-72,cy-48,cx-48,cy-88,cx,cy-88);
+    ctx.closePath(); ctx.fill();
+    // prominent cheekbone highlight
+    ctx.fillStyle="rgba(255,255,255,0.07)";
+    ctx.beginPath(); ctx.ellipse(cx-44,cy+5,18,10,-0.3,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+44,cy+5,18,10, 0.3,0,Math.PI*2); ctx.fill();
+  } else {
+    // Anok: oval, strong wide cheekbones, broader nose bridge, sculpted
+    const g=ctx.createRadialGradient(cx-8,cy-15,10,cx,cy+5,86);
+    g.addColorStop(0,lighten(c.skin,18)); g.addColorStop(1,c.skin);
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy-84);
+    ctx.bezierCurveTo(cx+50,cy-84,cx+74,cy-42,cx+76,cy+12);
+    ctx.bezierCurveTo(cx+76,cy+50,cx+52,cy+76,cx+26,cy+88);
+    ctx.bezierCurveTo(cx+10,cy+94,cx-10,cy+94,cx-26,cy+88);
+    ctx.bezierCurveTo(cx-52,cy+76,cx-76,cy+50,cx-76,cy+12);
+    ctx.bezierCurveTo(cx-74,cy-42,cx-50,cy-84,cx,cy-84);
+    ctx.closePath(); ctx.fill();
+    // sculpted cheekbone highlight (subtle, matching deep skin)
+    ctx.fillStyle="rgba(255,180,120,0.08)";
+    ctx.beginPath(); ctx.ellipse(cx-46,cy+10,22,11,-0.2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+46,cy+10,22,11, 0.2,0,Math.PI*2); ctx.fill();
+  }
+}
+
+// ── Hair styles ───────────────────────────────────────────────────────────────
+function drawPersonaHair(ctx,cx,cy,c,persona){
+  ctx.fillStyle=c.hair;
+  if(persona==="alexia"){
+    // Kendall: long straight centre-parted dark brown-black hair
+    // Back layer
+    ctx.fillStyle=darken(c.hair,15);
+    ctx.beginPath();
+    ctx.moveTo(cx-82,cy+30);
+    ctx.bezierCurveTo(cx-92,cy-20,cx-86,cy-72,cx-58,cy-92);
+    ctx.bezierCurveTo(cx-30,cy-110,cx+30,cy-110,cx+58,cy-92);
+    ctx.bezierCurveTo(cx+86,cy-72,cx+92,cy-20,cx+82,cy+30);
+    ctx.bezierCurveTo(cx+75,cy+85,cx+68,cy+140,cx+62,cy+200);
+    ctx.bezierCurveTo(cx+30,cy+175,cx+10,cy+168,cx,cy+170);
+    ctx.bezierCurveTo(cx-10,cy+168,cx-30,cy+175,cx-62,cy+200);
+    ctx.bezierCurveTo(cx-68,cy+140,cx-75,cy+85,cx-82,cy+30);
+    ctx.fill();
+    // Top/front layer — sleek straight
+    ctx.fillStyle=c.hair;
+    ctx.beginPath();
+    ctx.moveTo(cx-70,cy+10);
+    ctx.bezierCurveTo(cx-80,cy-30,cx-76,cy-80,cx-52,cy-96);
+    ctx.bezierCurveTo(cx-28,cy-112,cx+28,cy-112,cx+52,cy-96);
+    ctx.bezierCurveTo(cx+76,cy-80,cx+80,cy-30,cx+70,cy+10);
+    ctx.bezierCurveTo(cx+58,cy+2,cx+28,cy-6,cx+2,cy-6);
+    ctx.lineTo(cx-2,cy-6);
+    ctx.bezierCurveTo(cx-28,cy-6,cx-58,cy+2,cx-70,cy+10);
+    ctx.fill();
+    // Centre part line
+    ctx.strokeStyle=darken(c.hair,20); ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(cx,cy-112); ctx.lineTo(cx,cy-6); ctx.stroke();
+    // Shine highlight — signature Kendall glossy straight
+    ctx.fillStyle="rgba(255,255,255,0.07)";
+    ctx.beginPath();
+    ctx.moveTo(cx-22,cy-108); ctx.bezierCurveTo(cx-14,cy-80,cx-16,cy-40,cx-20,cy+10);
+    ctx.bezierCurveTo(cx-26,cy-40,cx-26,cy-80,cx-22,cy-108); ctx.fill();
+
+  } else if(persona==="luna"){
+    // Bella: dark chocolate brown, wavy/slightly tousled, off-centre part
+    ctx.fillStyle=darken(c.hair,10);
+    ctx.beginPath();
+    ctx.moveTo(cx-80,cy+25);
+    ctx.bezierCurveTo(cx-94,cy-15,cx-90,cy-68,cx-65,cy-92);
+    ctx.bezierCurveTo(cx-38,cy-112,cx+20,cy-116,cx+52,cy-100);
+    ctx.bezierCurveTo(cx+84,cy-76,cx+90,cy-18,cx+80,cy+25);
+    ctx.bezierCurveTo(cx+72,cy+90,cx+66,cy+145,cx+58,cy+200);
+    ctx.bezierCurveTo(cx+28,cy+170,cx+8,cy+162,cx,cy+164);
+    ctx.bezierCurveTo(cx-20,cy+162,cx-42,cy+170,cx-70,cy+200);
+    ctx.bezierCurveTo(cx-74,cy+145,cx-76,cy+90,cx-80,cy+25);
+    ctx.fill();
+    ctx.fillStyle=c.hair;
+    ctx.beginPath();
+    ctx.moveTo(cx-72,cy+15);
+    ctx.bezierCurveTo(cx-84,cy-22,cx-80,cy-72,cx-58,cy-94);
+    ctx.bezierCurveTo(cx-32,cy-114,cx+16,cy-116,cx+48,cy-98);
+    ctx.bezierCurveTo(cx+78,cy-72,cx+82,cy-14,cx+72,cy+15);
+    ctx.bezierCurveTo(cx+58,cy+5,cx+30,cy-4,cx+8,cy-5);
+    ctx.lineTo(cx-8,cy-5);
+    ctx.bezierCurveTo(cx-30,cy-3,cx-58,cy+5,cx-72,cy+15);
+    ctx.fill();
+    // Off-centre part (slightly to right — her signature)
+    ctx.strokeStyle=darken(c.hair,18); ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(cx+8,cy-116); ctx.lineTo(cx+6,cy-5); ctx.stroke();
+    // wavy strands
+    ctx.strokeStyle=darken(c.hair,8); ctx.lineWidth=2; ctx.lineCap="round";
+    [[cx-58,cy+20,cx-64,cy+55,cx-58,cy+90],[cx+58,cy+20,cx+62,cy+55,cx+56,cy+90]].forEach(([x1,y1,x2,y2,x3,y3])=>{
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.quadraticCurveTo(x2,y2,x3,y3); ctx.stroke();
+    });
+    // subtle highlight
+    ctx.fillStyle="rgba(255,255,255,0.055)";
+    ctx.beginPath(); ctx.ellipse(cx+16,cy-80,12,30,-0.15,0,Math.PI*2); ctx.fill();
+
+  } else {
+    // Anok Yai: natural coiled/afro-textured hair, full volume crown, close to head
+    // Base coil mass
+    ctx.fillStyle=c.hair;
+    ctx.beginPath();
+    ctx.moveTo(cx-68,cy+5);
+    ctx.bezierCurveTo(cx-82,cy-30,cx-80,cy-80,cx-52,cy-105);
+    ctx.bezierCurveTo(cx-28,cy-126,cx+28,cy-126,cx+52,cy-105);
+    ctx.bezierCurveTo(cx+80,cy-80,cx+82,cy-30,cx+68,cy+5);
+    ctx.bezierCurveTo(cx+55,cy,cx+28,cy-8,cx,cy-8);
+    ctx.bezierCurveTo(cx-28,cy-8,cx-55,cy,cx-68,cy+5);
+    ctx.fill();
+    // Volume layer — coily texture effect using small overlapping arcs
+    ctx.fillStyle=lighten(c.hair,6);
+    const coils=[
+      [cx-40,cy-90,18],[cx-20,cy-108,16],[cx+5,cy-112,18],[cx+30,cy-104,16],
+      [cx+48,cy-88,15],[cx-55,cy-72,14],[cx+55,cy-72,14],
+      [cx-30,cy-95,13],[cx+18,cy-108,14],[cx-8,cy-114,12],
+    ];
+    coils.forEach(([x,y,r])=>{
+      ctx.beginPath();
+      ctx.arc(x,y,r,0,Math.PI*2);
+      ctx.fill();
+    });
+    // Dark shading between coils
+    ctx.fillStyle=darken(c.hair,5);
+    const shades=[[cx-28,cy-90,8],[cx+10,cy-108,7],[cx+36,cy-94,7],[cx-46,cy-78,6],[cx+48,cy-78,6]];
+    shades.forEach(([x,y,r])=>{ ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); });
+    // Soft outer edge for depth
+    const coilG=ctx.createRadialGradient(cx,cy-88,30,cx,cy-88,72);
+    coilG.addColorStop(0,"rgba(0,0,0,0)"); coilG.addColorStop(1,"rgba(0,0,0,0.35)");
+    ctx.fillStyle=coilG;
+    ctx.beginPath(); ctx.ellipse(cx,cy-88,72,52,0,0,Math.PI*2); ctx.fill();
+  }
+}
+
+// ── Eyebrows ──────────────────────────────────────────────────────────────────
+function drawBrows(ctx,cx,cy,c,persona,raiseL,raiseR){
+  ctx.strokeStyle=c.brow; ctx.lineCap="round";
+  if(persona==="alexia"){
+    // Kendall: straight, slightly bold, minimal arch — her signature barely-there brow
+    ctx.lineWidth=3.5;
+    ctx.beginPath(); ctx.moveTo(cx-47,cy-32-raiseL*9); ctx.bezierCurveTo(cx-30,cy-34-raiseL*10,cx-16,cy-33-raiseL*9,cx-12,cy-31-raiseL*8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+12,cy-31-raiseR*8); ctx.bezierCurveTo(cx+16,cy-33-raiseR*9,cx+30,cy-34-raiseR*10,cx+47,cy-32-raiseR*9); ctx.stroke();
+  } else if(persona==="luna"){
+    // Bella: strong angular brow, slight downward tail — her dramatic brow
+    ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(cx-48,cy-30-raiseL*9); ctx.bezierCurveTo(cx-34,cy-36-raiseL*11,cx-18,cy-38-raiseL*11,cx-12,cy-34-raiseL*9); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+12,cy-34-raiseR*9); ctx.bezierCurveTo(cx+18,cy-38-raiseR*11,cx+34,cy-36-raiseR*11,cx+48,cy-30-raiseR*9); ctx.stroke();
+  } else {
+    // Anok: fuller, more horizontal, powerful brow — close to lid
+    ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(cx-46,cy-28-raiseL*8); ctx.bezierCurveTo(cx-32,cy-31-raiseL*9,cx-16,cy-30-raiseL*8,cx-12,cy-28-raiseL*7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+12,cy-28-raiseR*7); ctx.bezierCurveTo(cx+16,cy-30-raiseR*8,cx+32,cy-31-raiseR*9,cx+46,cy-28-raiseR*8); ctx.stroke();
+  }
+}
+
+// ── Eyes — persona specific ───────────────────────────────────────────────────
+function drawPersonaEye(ctx,x,y,openAmt,px,py,c,persona,side){
+  const h=12*openAmt; if(h<0.4) return;
+
+  if(persona==="alexia"){
+    // Kendall: slightly almond-shaped, upward outer corner, cat-eye tendency
+    const tiltY = side==="L"?-1.5:1.5;
+    ctx.fillStyle="#fff";
+    ctx.save(); ctx.beginPath();
+    ctx.moveTo(x-14,y); ctx.bezierCurveTo(x-6,y-h,x+6,y-h,x+14,y+tiltY);
+    ctx.bezierCurveTo(x+6,y+h*0.7,x-6,y+h*0.7,x-14,y); ctx.clip(); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.beginPath();
+    ctx.moveTo(x-14,y); ctx.bezierCurveTo(x-6,y-h,x+6,y-h,x+14,y+tiltY);
+    ctx.bezierCurveTo(x+6,y+h*0.7,x-6,y+h*0.7,x-14,y); ctx.clip();
+    ctx.fillStyle=c.eye; ctx.beginPath(); ctx.ellipse(x+px,y+py,8,Math.min(h,9),0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#1a1008"; ctx.beginPath(); ctx.ellipse(x+px*1.1,y+py*1.1,4,Math.min(h*0.5,4.5),0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,0.9)"; ctx.beginPath(); ctx.ellipse(x+px+2.5,y+py-2.5,1.8,1.3,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+    // cat-eye upper lash
+    ctx.strokeStyle="#0d0a06"; ctx.lineWidth=2.2; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(x-14,y); ctx.bezierCurveTo(x-6,y-h,x+6,y-h,x+14,y+tiltY); ctx.stroke();
+    // liner flick
+    if(side==="L"){ ctx.beginPath(); ctx.moveTo(x-14,y); ctx.lineTo(x-18,y-3); ctx.stroke(); }
+    else           { ctx.beginPath(); ctx.moveTo(x+14,y+tiltY); ctx.lineTo(x+18,y+tiltY-3); ctx.stroke(); }
+
+  } else if(persona==="luna"){
+    // Bella: hooded, deep-set, heavy upper lid, slightly droopy outer corner — her iconic look
+    const droop=side==="L"?2:-2;
+    ctx.fillStyle="#fff";
+    ctx.save(); ctx.beginPath();
+    ctx.moveTo(x-13,y); ctx.bezierCurveTo(x-5,y-h*0.7,x+5,y-h*0.7,x+13,y+droop);
+    ctx.bezierCurveTo(x+6,y+h*0.55,x-6,y+h*0.55,x-13,y); ctx.clip(); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.beginPath();
+    ctx.moveTo(x-13,y); ctx.bezierCurveTo(x-5,y-h*0.7,x+5,y-h*0.7,x+13,y+droop);
+    ctx.bezierCurveTo(x+6,y+h*0.55,x-6,y+h*0.55,x-13,y); ctx.clip();
+    ctx.fillStyle=c.eye; ctx.beginPath(); ctx.ellipse(x+px,y+py+1,7.5,Math.min(h*0.85,8),0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#0d0806"; ctx.beginPath(); ctx.ellipse(x+px*1.1,y+py*1.1+0.5,4,Math.min(h*0.48,4),0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,0.85)"; ctx.beginPath(); ctx.ellipse(x+px+2,y+py-2,1.6,1.2,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+    // heavy upper lid
+    ctx.strokeStyle="#110804"; ctx.lineWidth=3; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(x-13,y); ctx.bezierCurveTo(x-5,y-h*0.7,x+5,y-h*0.7,x+13,y+droop); ctx.stroke();
+    // heavy lower line — her signature
+    ctx.lineWidth=1.4; ctx.strokeStyle="rgba(30,10,5,0.7)";
+    ctx.beginPath(); ctx.moveTo(x-13,y); ctx.bezierCurveTo(x-5,y+h*0.4,x+5,y+h*0.4,x+13,y+droop); ctx.stroke();
+
+  } else {
+    // Anok: wide-set, large dark almond eyes, very dark iris blending into pupil
+    ctx.fillStyle="#fff";
+    ctx.save(); ctx.beginPath();
+    ctx.moveTo(x-14,y); ctx.bezierCurveTo(x-5,y-h,x+5,y-h,x+14,y);
+    ctx.bezierCurveTo(x+5,y+h,x-5,y+h,x-14,y); ctx.clip(); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.beginPath();
+    ctx.moveTo(x-14,y); ctx.bezierCurveTo(x-5,y-h,x+5,y-h,x+14,y);
+    ctx.bezierCurveTo(x+5,y+h,x-5,y+h,x-14,y); ctx.clip();
+    // Very dark iris — nearly merges with pupil
+    ctx.fillStyle="#1A0808"; ctx.beginPath(); ctx.ellipse(x+px,y+py,9,Math.min(h,10),0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#080304"; ctx.beginPath(); ctx.ellipse(x+px*1.05,y+py*1.05,5,Math.min(h*0.55,5.5),0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,0.88)"; ctx.beginPath(); ctx.ellipse(x+px+2.5,y+py-2.5,1.9,1.4,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle="#080304"; ctx.lineWidth=2.5; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(x-14,y); ctx.bezierCurveTo(x-5,y-h,x+5,y-h,x+14,y); ctx.stroke();
+    // Bottom lash
+    ctx.lineWidth=1.2; ctx.strokeStyle="rgba(8,3,4,0.6)";
+    ctx.beginPath(); ctx.moveTo(x-14,y); ctx.bezierCurveTo(x-5,y+h,x+5,y+h,x+14,y); ctx.stroke();
+  }
+}
+
+// ── Nose ──────────────────────────────────────────────────────────────────────
+function drawNose(ctx,cx,cy,c,persona){
+  ctx.strokeStyle=darken(c.skin,28); ctx.lineCap="round";
+  if(persona==="alexia"){
+    // Kendall: straight narrow nose, subtle
+    ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(cx-4,cy+8); ctx.bezierCurveTo(cx-7,cy+22,cx-5,cy+28,cx-4,cy+31);
+    ctx.quadraticCurveTo(cx,cy+33,cx+4,cy+31); ctx.bezierCurveTo(cx+5,cy+28,cx+7,cy+22,cx+4,cy+8); ctx.stroke();
+    // nostrils — tiny, refined
+    ctx.strokeStyle=darken(c.skin,36); ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.arc(cx-7,cy+31,3,Math.PI,0); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx+7,cy+31,3,Math.PI,0); ctx.stroke();
+  } else if(persona==="luna"){
+    // Bella: sharp bridge, defined tip
+    ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.moveTo(cx-3,cy+7); ctx.bezierCurveTo(cx-8,cy+20,cx-7,cy+28,cx-5,cy+32);
+    ctx.quadraticCurveTo(cx,cy+34,cx+5,cy+32); ctx.bezierCurveTo(cx+7,cy+28,cx+8,cy+20,cx+3,cy+7); ctx.stroke();
+    ctx.strokeStyle=darken(c.skin,38); ctx.lineWidth=1.3;
+    ctx.beginPath(); ctx.arc(cx-7,cy+32,3.5,Math.PI,0); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx+7,cy+32,3.5,Math.PI,0); ctx.stroke();
+  } else {
+    // Anok: broader, flatter bridge, wider nostrils — fuller nose
+    ctx.lineWidth=1.8;
+    ctx.beginPath(); ctx.moveTo(cx-6,cy+8); ctx.bezierCurveTo(cx-10,cy+22,cx-9,cy+28,cx-6,cy+31);
+    ctx.quadraticCurveTo(cx,cy+34,cx+6,cy+31); ctx.bezierCurveTo(cx+9,cy+28,cx+10,cy+22,cx+6,cy+8); ctx.stroke();
+    ctx.strokeStyle=darken(c.skin,25); ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(cx-9,cy+31,5,Math.PI,0); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx+9,cy+31,5,Math.PI,0); ctx.stroke();
+  }
+}
+
+// ── Mouth ─────────────────────────────────────────────────────────────────────
+function drawPersonaMouth(ctx,x,y,openAmt,c,persona,flush){
+  const w=persona==="grace"?32:persona==="luna"?26:28;
+  ctx.fillStyle=c.lip;
+  ctx.beginPath();
+  // Upper lip — persona specific cupid's bow
+  if(persona==="alexia"){
+    // Kendall: full lips, soft cupid bow
+    ctx.moveTo(x-w,y); ctx.bezierCurveTo(x-w+5,y-7,x-9,y-9,x,y-4);
+    ctx.bezierCurveTo(x+9,y-9,x+w-5,y-7,x+w,y);
+  } else if(persona==="luna"){
+    // Bella: pronounced cupid bow, slightly pouty
+    ctx.moveTo(x-w,y); ctx.bezierCurveTo(x-w+4,y-8,x-8,y-11,x,y-5);
+    ctx.bezierCurveTo(x+8,y-11,x+w-4,y-8,x+w,y);
+  } else {
+    // Anok: fuller lips, wider
+    ctx.moveTo(x-w,y); ctx.bezierCurveTo(x-w+6,y-6,x-10,y-8,x,y-3);
+    ctx.bezierCurveTo(x+10,y-8,x+w-6,y-6,x+w,y);
+  }
+  ctx.bezierCurveTo(x+w-4,y+3,x+4,y+3+openAmt*18,x,y+3+openAmt*18);
+  ctx.bezierCurveTo(x-4,y+3+openAmt*18,x-w+4,y+3,x-w,y);
+  ctx.closePath(); ctx.fill();
+
+  if(openAmt>0.05){
+    ctx.fillStyle="#1a0404";
+    ctx.beginPath(); ctx.ellipse(x,y+openAmt*9+2,w*0.62,openAmt*10,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#fffff5";
+    ctx.beginPath(); ctx.ellipse(x,y+openAmt*5+1,w*0.5,openAmt*5,0,0,Math.PI*2); ctx.fill();
+  }
+  // Lip outline
+  ctx.strokeStyle=darken(c.lip,25); ctx.lineWidth=1.1; ctx.lineCap="round";
+  ctx.beginPath();
+  if(persona==="alexia"){ ctx.moveTo(x-w,y); ctx.bezierCurveTo(x-w+5,y-7,x-9,y-9,x,y-4); ctx.bezierCurveTo(x+9,y-9,x+w-5,y-7,x+w,y); }
+  else if(persona==="luna"){ ctx.moveTo(x-w,y); ctx.bezierCurveTo(x-w+4,y-8,x-8,y-11,x,y-5); ctx.bezierCurveTo(x+8,y-11,x+w-4,y-8,x+w,y); }
+  else { ctx.moveTo(x-w,y); ctx.bezierCurveTo(x-w+6,y-6,x-10,y-8,x,y-3); ctx.bezierCurveTo(x+10,y-8,x+w-6,y-6,x+w,y); }
+  ctx.stroke();
+
+  if(flush>0.25){
+    ctx.strokeStyle=`rgba(255,80,80,${flush*0.35})`; ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.arc(x-w+3,y+8,10,-0.6,0.9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x+w-3,y+8,10,Math.PI-0.9,Math.PI+0.6); ctx.stroke();
+  }
+}
+
+function lighten(hex,amt){
+  const n=parseInt(hex.slice(1),16);
+  const r=Math.min(255,((n>>16)&0xff)+amt), g=Math.min(255,((n>>8)&0xff)+amt), b=Math.min(255,(n&0xff)+amt);
+  return `#${((r<<16)|(g<<8)|b).toString(16).padStart(6,"0")}`;
+}
+function darken(hex,amt){
+  const n=parseInt(hex.slice(1),16);
+  const r=Math.max(0,((n>>16)&0xff)-amt), g=Math.max(0,((n>>8)&0xff)-amt), b=Math.max(0,(n&0xff)-amt);
+  return `#${((r<<16)|(g<<8)|b).toString(16).padStart(6,"0")}`;
+}
+
+
+// ─── VOICE MODE ───────────────────────────────────────────────────────────────
+function VoiceMode({ profile, onUpdateProfile }) {
+  const [persona, setPersona]       = useState("alexia");
+  const [phase, setPhase]           = useState("idle");   // idle | listening | thinking | talking
+  const [transcript, setTranscript] = useState("");
+  const [lastUserLine, setLastUserLine] = useState("");
+  const [lastReply, setLastReply]   = useState("");
+  const [rizz, setRizz]             = useState(0);
+  const [celebrate, setCelebrate]   = useState(false);
+  const [statusText, setStatusText] = useState("Tap the mic to start talking");
+  const [supported, setSupported]   = useState(true);
+
+  const apiHistory = useRef([]);
+  const synthRef   = useRef(window.speechSynthesis);
+  const recognRef  = useRef(null);
+  const isTalking  = phase === "talking";
+  const isListening= phase === "listening";
+  const p          = PERSONAS[persona];
+
+  useEffect(()=>{
+    if(!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)){
+      setSupported(false);
+    }
+    return ()=>{ synthRef.current?.cancel(); recognRef.current?.abort(); };
+  },[]);
+
+  function resetChat(){
+    synthRef.current?.cancel();
+    recognRef.current?.abort();
+    apiHistory.current = [];
+    setPhase("idle"); setRizz(0); setTranscript(""); setLastUserLine(""); setLastReply("");
+    setStatusText("Tap the mic to start talking");
+  }
+
+  useEffect(()=>{ resetChat(); },[persona]);
+
+  function stopAll(){
+    synthRef.current?.cancel();
+    recognRef.current?.abort();
+    setPhase("idle");
+    setStatusText("Your turn — tap mic 🎙️");
+  }
+
+  function startListeningFixed(){
+    if(!supported){ setStatusText("Speech recognition not supported in this browser."); return; }
+    synthRef.current?.cancel();
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recog = new SpeechRecognition();
+    recognRef.current = recog;
+    recog.continuous = false; recog.interimResults = true; recog.lang = "en-US";
+    setPhase("listening"); setTranscript(""); setStatusText("Listening... 🎙️");
+    let finalText = "";
+    recog.onresult = (e)=>{
+      let interim = "";
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal) finalText += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      setTranscript(finalText||interim);
+    };
+    recog.onerror = ()=>{ setPhase("idle"); setStatusText("Mic error — try again"); };
+    recog.onend   = ()=>{
+      if(finalText.trim()) handleUserSpeech(finalText.trim());
+      else { setPhase("idle"); setStatusText("Didn't catch that — tap mic again"); }
+    };
+    recog.start();
+  }
+
+  async function handleUserSpeech(text){
+    setLastUserLine(text);
+    setPhase("thinking");
+    setStatusText("She's thinking... 💭");
+    apiHistory.current = [...apiHistory.current, { role:"user", content:text }];
+    try {
+      const parsed = await callAI(p.system, apiHistory.current);
+      const score  = Math.min(100, Math.max(0, parsed.rizzScore||0));
+      setRizz(score);
+      if(score>(profile?.peakPracticeRizz||0)) onUpdateProfile({peakPracticeRizz:score});
+      if(score>(profile?.peakGameRizz||0))     onUpdateProfile({peakGameRizz:score});
+      apiHistory.current = [...apiHistory.current, { role:"assistant", content: parsed.reply||"..." }];
+      const reply = parsed.reply || "Hmm.";
+      setLastReply(reply);
+      if(score>=100){ setCelebrate(true); setTimeout(()=>setCelebrate(false),3500); }
+      speakReply(reply);
+    } catch {
+      setPhase("idle");
+      setStatusText("Error — tap mic to retry");
+    }
+  }
+
+  function speakReply(text){
+    synthRef.current?.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    const voices = synthRef.current?.getVoices()||[];
+    const preferred = voices.find(v=>
+      v.name.toLowerCase().includes("female")||
+      v.name.includes("Samantha")||v.name.includes("Google UK English Female")||
+      v.name.includes("Microsoft Zira")||v.name.includes("Karen")
+    );
+    if(preferred) utt.voice = preferred;
+    utt.pitch = persona==="luna"?1.1:persona==="grace"?1.0:1.05;
+    utt.rate  = persona==="grace"?1.05:0.92;
+    utt.onstart = ()=>{ setPhase("talking"); setStatusText("She's talking... 💬"); };
+    utt.onend   = ()=>{ setPhase("idle");   setStatusText("Your turn — tap mic 🎙️"); };
+    synthRef.current?.speak(utt);
+  }
+
+  if(!supported) return (
+    <div style={{maxWidth:560,margin:"0 auto",padding:20}}>
+      <Card style={{padding:40,textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:16}}>🎤</div>
+        <div style={{fontFamily:"'Bebas Neue'",fontSize:22,letterSpacing:3,marginBottom:10}}>VOICE MODE</div>
+        <div style={{color:G.muted,fontSize:14,lineHeight:1.6}}>
+          Voice mode requires Chrome or Edge browser.<br/>
+          Safari and Firefox do not support the Web Speech API.
+        </div>
+      </Card>
+    </div>
+  );
+
+  return (
+    <div style={{maxWidth:560,margin:"0 auto",padding:20}}>
+      {celebrate && <Confetti active/>}
+      <div style={{display:"flex",flexDirection:"column",gap:18}}>
+
+        {/* Persona picker */}
+        <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+          {Object.entries(PERSONAS).map(([k,v])=>(
+            <button key={k} onClick={()=>setPersona(k)}
+              style={{flex:1,padding:"10px 6px",fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:2,
+                background:persona===k?`linear-gradient(135deg,${G.fire},${G.pink})`:"transparent",
+                border:`2px solid ${persona===k?G.fire:G.border}`,color:persona===k?"#fff":G.muted,
+                cursor:"pointer",clipPath:"polygon(6px 0%,100% 0%,calc(100% - 6px) 100%,0% 100%)",transition:"all .2s"}}>
+              {v.emoji} {v.name}
+            </button>
+          ))}
+        </div>
+
+        {/* Face + rizz bar */}
+        <Card accent={`linear-gradient(90deg,${G.fire},${G.gold},${G.pink})`} style={{padding:20,textAlign:"center"}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:4,color:G.muted,marginBottom:10}}>
+            {p.emoji} {p.name}
+          </div>
+          <AiFace isTalking={isTalking} isListening={isListening} rizzLevel={rizz} persona={persona}/>
+          <div style={{marginTop:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+              <span style={{fontFamily:"'Bebas Neue'",fontSize:12,letterSpacing:2,color:G.muted}}>RIZZ LEVEL</span>
+              <span style={{fontFamily:"'Bebas Neue'",fontSize:15,color:rizz>=80?G.gold:rizz>=50?G.fire:G.muted}}>{rizz}%</span>
+            </div>
+            <RizzBar pct={rizz} color={rizz>=80?G.gold:rizz>=50?G.fire:G.pink}/>
+          </div>
+          {lastReply && (
+            <div style={{marginTop:14,padding:"10px 14px",background:"rgba(255,255,255,0.04)",border:`1px solid ${G.border}`,borderRadius:2,fontSize:13,color:G.text,fontStyle:"italic",textAlign:"left"}}>
+              "{lastReply}"
+            </div>
+          )}
+          {lastUserLine && (
+            <div style={{marginTop:8,fontSize:11,color:G.muted,textAlign:"right"}}>You: "{lastUserLine}"</div>
+          )}
+        </Card>
+
+        {/* Status */}
+        <div style={{textAlign:"center",fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:3,color:G.muted,minHeight:24}}>
+          {phase==="thinking"?<TypingDots/>:<span>{statusText}</span>}
+        </div>
+        {isListening && transcript && (
+          <div style={{textAlign:"center",fontSize:13,color:G.neon,fontStyle:"italic"}}>"{transcript}"</div>
+        )}
+
+        {/* Big mic button */}
+        <div style={{textAlign:"center"}}>
+          <button
+            onClick={phase==="idle" ? startListeningFixed : stopAll}
+            style={{
+              width:100,height:100,borderRadius:"50%",
+              background:isListening
+                ?`radial-gradient(circle,#00FFB2,#009966)`
+                :phase==="talking"||phase==="thinking"
+                  ?`radial-gradient(circle,${G.muted},#333)`
+                  :`radial-gradient(circle,${G.fire},${G.pink})`,
+              border:"none",cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              fontSize:38,margin:"0 auto",
+              boxShadow:isListening
+                ?`0 0 0 8px rgba(0,255,178,0.2),0 0 0 16px rgba(0,255,178,0.08)`
+                :`0 0 30px rgba(255,77,0,0.4)`,
+              transition:"all .3s",
+              animation:isListening?"pulse 1s ease-in-out infinite":"none",
+            }}
+          >
+            {isListening?"🔴":phase==="talking"?"🔇":"🎙️"}
+          </button>
+          <div style={{marginTop:10,fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:2,color:G.muted}}>
+            {isListening?"TAP TO STOP":phase==="talking"?"SKIP":"TAP TO SPEAK"}
+          </div>
+        </div>
+
+        {/* Tips */}
+        <Card style={{padding:14}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:11,letterSpacing:3,color:G.muted,marginBottom:8}}>💡 VOICE TIPS</div>
+          {[["🎤","Speak clearly and naturally"],["😏","Tone matters — confident and smooth"],["⏳","Give it a second after you stop talking"],["🔇","Tap mic again to interrupt her"]].map(([ic,tip])=>(
+            <div key={tip} style={{fontSize:11,color:G.muted,padding:"4px 0",borderBottom:`1px solid rgba(255,255,255,0.04)`,display:"flex",gap:6}}><span>{ic}</span>{tip}</div>
+          ))}
+        </Card>
+
+        <Btn onClick={resetChat} v="ghost" style={{width:"100%",fontSize:13,padding:"9px"}}>↩ RESET CONVERSATION</Btn>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── API KEY SCREEN ───────────────────────────────────────────────────────────
+function ApiKeyScreen({onKey}){
+  const [val,setVal] = useState("");
+  const [err,setErr] = useState("");
+  function submit(){
+    const k=val.trim();
+    if(!k){ setErr("Please enter your API key."); return; }
+    if(!k.startsWith("sk-ant-")){ setErr("Key should start with sk-ant- (Anthropic API key)"); return; }
+    onKey(k);
+  }
+  return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20,background:G.dark}}>
+      <div style={{maxWidth:460,width:"100%"}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:"clamp(56px,12vw,96px)",letterSpacing:10,background:`linear-gradient(135deg,${G.fire},${G.gold},${G.pink})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",animation:"flicker 4s ease-in-out infinite",lineHeight:1}}>RIZZ ME</div>
+          <div style={{fontFamily:"'Permanent Marker'",color:G.muted,fontSize:13,letterSpacing:2,marginTop:6}}>⚡ Can you make the AI blush? ⚡</div>
+        </div>
+        <div style={{background:G.card,border:`1px solid ${G.border}`,borderRadius:4,padding:28,position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,${G.fire},${G.gold},${G.pink})`}}/>
+          <div style={{fontFamily:"'Bebas Neue'",fontSize:14,letterSpacing:3,color:G.muted,marginBottom:8}}>🔑 ANTHROPIC API KEY REQUIRED</div>
+          <div style={{fontSize:13,color:G.muted,marginBottom:18,lineHeight:1.7}}>
+            This app uses the Claude AI API directly from your browser.<br/>
+            Your key is saved only in <strong style={{color:G.text}}>your browser</strong> and never shared.<br/>
+            Get a free key at{" "}<a href="https://console.anthropic.com" target="_blank" style={{color:G.fire,textDecoration:"none"}}>console.anthropic.com</a>
+          </div>
+          <input
+            value={val} onChange={e=>setVal(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&submit()}
+            placeholder="sk-ant-api03-..."
+            type="password"
+            style={{width:"100%",background:"rgba(255,255,255,0.04)",border:`1px solid ${err?G.pink:G.border}`,color:G.text,fontSize:13,padding:"11px 14px",borderRadius:3,outline:"none",fontFamily:"monospace",marginBottom:8}}
+          />
+          {err && <div style={{fontSize:12,color:G.pink,marginBottom:10}}>{err}</div>}
+          <button onClick={submit} style={{width:"100%",background:`linear-gradient(135deg,${G.fire},${G.pink})`,color:"#fff",fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:3,padding:"13px 0",border:"none",cursor:"pointer",clipPath:"polygon(7px 0%,100% 0%,calc(100% - 7px) 100%,0% 100%)",marginTop:4}}>
+            ENTER THE ARENA 🔥
+          </button>
+        </div>
+        <div style={{textAlign:"center",marginTop:12,fontSize:11,color:G.muted}}>
+          Standard Anthropic API fees apply (~$0.003 per conversation)
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ROOT APP ─────────────────────────────────────────────────────────────────
+function App(){
+  // ALL hooks must be at top - no hooks after conditional returns
+  const [apiKey,setApiKey]     = useState(()=>localStorage.getItem("rizz_apikey")||"");
+  const [profile,setProfile]   = useState(null);
+  const [booting,setBooting]   = useState(true);
+  const [tab,setTab]           = useState("practice");
+  const profileRef             = useRef(null);
+
+  useEffect(()=>{
+    if(!apiKey){ setBooting(false); return; }
+    (async()=>{
+      try{
+        const sess = await window.storage.get("my-session");
+        if(sess){
+          const {email} = JSON.parse(sess.value);
+          const key = emailKey(email);
+          const acc = await window.storage.get(key,true);
+          if(acc){
+            const p = JSON.parse(acc.value);
+            profileRef.current = p;
+            setProfile(p);
+          }
+        }
+      }catch{}
+      setBooting(false);
+    })();
+  },[apiKey]);
+
+  async function updateProfile(updates){
+    const base = profileRef.current || {};
+    const np = {...base,...updates};
+    profileRef.current = np;
+    setProfile({...np});
+    try{
+      const key = emailKey(np.email||"");
+      await window.storage.set(key, JSON.stringify(np), true);
+      await window.storage.set(`player-${(np.name||"unknown").toLowerCase()}`, JSON.stringify(np), true);
+      await window.storage.set("my-session", JSON.stringify({email:np.email||""}));
+    }catch(e){ console.error("save failed",e); }
+  }
+
+  async function logout(){
+    try{ await window.storage.delete("my-session"); }catch{}
+    profileRef.current = null;
+    setProfile(null);
+    setTab("practice");
+  }
+
+  const TABS = [
+    {k:"practice",l:"🎯 PRACTICE"},
+    {k:"voice",   l:"🎤 VOICE MODE"},
+    {k:"ranked",  l:"⚔️ RANKED"},
+    {k:"leaderboard",l:"🏆 LEADERBOARD"},
+  ];
+
+  // Show API key screen first if no key stored
+  if(!apiKey) return(
+    <><style>{CSS}</style>
+    <ApiKeyScreen onKey={k=>{ localStorage.setItem("rizz_apikey",k); setApiKey(k); setBooting(true); }}/>
+    </>
+  );
+
+  if(booting) return(
+    <><style>{CSS}</style>
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <Spinner/>
+    </div></>
+  );
+
+  if(!profile) return(
+    <><style>{CSS}</style>
+    <AuthScreen onComplete={p=>{ profileRef.current=p; setProfile(p); }}/>
+    </>
+  );
+
+  const rank = getRank(profile.mmr||0);
+
+  return(
+    <>
+      <style>{CSS}</style>
+      <div style={{position:"fixed",inset:0,background:`radial-gradient(ellipse at 18% 50%,rgba(255,77,0,0.055) 0%,transparent 52%),radial-gradient(ellipse at 82% 18%,rgba(255,45,120,0.055) 0%,transparent 52%)`,pointerEvents:"none"}}/>
+
+      <header style={{textAlign:"center",padding:"36px 20px 24px"}}>
+        <div style={{fontFamily:"'Bebas Neue'",fontSize:"clamp(46px,10vw,96px)",letterSpacing:10,background:`linear-gradient(135deg,${G.fire},${G.gold},${G.pink})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",animation:"flicker 4s ease-in-out infinite",lineHeight:1}}>RIZZ ME</div>
+        <div style={{fontFamily:"'Permanent Marker'",color:G.muted,fontSize:12,letterSpacing:2,marginTop:5}}>⚡ Can you make the AI blush? ⚡</div>
+        <div style={{display:"inline-flex",alignItems:"center",gap:10,marginTop:12,padding:"7px 15px",background:G.card,border:`1px solid ${G.border}`,borderRadius:2}}>
+          <span style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:2,color:G.muted}}>📧</span>
+          <span style={{fontFamily:"'Bebas Neue'",fontSize:14,letterSpacing:2}}>{profile.name}</span>
+          <RankBadge mmr={profile.mmr||0}/>
+          <span style={{fontSize:11,color:G.muted}}>{profile.wins||0}W {profile.losses||0}L</span>
+          <button onClick={logout} style={{background:"none",border:`1px solid ${G.border}`,color:G.muted,cursor:"pointer",fontSize:10,fontFamily:"'Bebas Neue'",letterSpacing:1,padding:"3px 8px",borderRadius:2}}>LOGOUT</button>
+        </div>
+      </header>
+
+      <nav style={{display:"flex",justifyContent:"center",gap:9,padding:"0 20px 28px",flexWrap:"wrap"}}>
+        {TABS.map(t=>(
+          <button key={t.k} onClick={()=>setTab(t.k)}
+            style={{fontFamily:"'Bebas Neue'",fontSize:17,letterSpacing:3,padding:"11px 30px",border:`2px solid ${tab===t.k?G.fire:G.border}`,background:tab===t.k?"rgba(255,77,0,0.14)":"transparent",color:tab===t.k?G.text:G.muted,cursor:"pointer",clipPath:"polygon(7px 0%,100% 0%,calc(100% - 7px) 100%,0% 100%)",transition:"all .2s"}}>
+            {t.l}
+          </button>
+        ))}
+      </nav>
+
+      <main style={{padding:"0 18px 64px"}}>
+        {tab==="practice"    && <PracticeMode    profile={profile} onUpdateProfile={updateProfile}/>}
+        {tab==="voice"       && <VoiceMode       profile={profile} onUpdateProfile={updateProfile}/>}
+        {/* Always mounted so polling and state survive tab switches */}
+        <RankedBattle profile={profile} onUpdateProfile={updateProfile} visible={tab==="ranked"}/>
+        {tab==="leaderboard" && <Leaderboard/>}
+      </main>
+    </>
+  );
+}
+
+
+document.getElementById('loading').style.display='none';
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
